@@ -13,7 +13,7 @@ typedef struct
 	char id[PROCESS_ID_LENGTH + 1];
 	process_init init;
 	process_fini fini;
-	process_periodic_task periodic_task;
+	process_periodic_task periodic_task; // The task should last less than 10ms
 	process_packet_recv packet_recv;
 } process_t;
 

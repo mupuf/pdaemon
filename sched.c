@@ -24,6 +24,7 @@ typedef struct
 	priority_t priority;	/* Important for message queuing */
 	status_t status;
 	process_t process;
+	//time_t next_exec;
 } sched_process_t;
 
 sched_process_t processes[PROCESS_MAX];
@@ -62,8 +63,9 @@ void sched_start()
 				cur_proc->process.periodic_task();
 
 				if (cur_proc->status != STARTED) {
-					printf("Proc %s exited with the status %i\n", cur_proc->process.id,
-							cur_proc->status);
+					printf("Proc %s exited with the status %i\n",
+						cur_proc->process.id,
+						cur_proc->status);
 				}
 				cur_proc->status = STARTED;
 			}
@@ -79,9 +81,9 @@ errno_t sched_add_process(pid_t pid, process_t process)
 		return -EACCES;
 
 	if (!process.init ||
-		!process.fini ||
-		!process.periodic_task ||
-		!process.packet_recv)
+	    !process.fini ||
+	    !process.periodic_task ||
+	    !process.packet_recv)
 		return -EFAULT;
 
 	processes[pid].process = process;

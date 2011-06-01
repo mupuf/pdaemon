@@ -1,5 +1,6 @@
 #include "sched.h"
 #include "proc_fan.h"
+#include "common.h"
 
 void init()
 {
@@ -23,6 +24,7 @@ void init()
 #ifdef SIMULATION
 int main(int argc, char** argv)
 {
+	nva_init();
 	init();
 	return 0;
 }
