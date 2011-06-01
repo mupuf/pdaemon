@@ -63,7 +63,7 @@ void sched_start()
 				cur_proc->process.periodic_task();
 
 				if (cur_proc->status != STARTED) {
-					printf("Proc %s exited with the status %i\n",
+					printf("Proc %s exited with status %i\n",
 						cur_proc->process.id,
 						cur_proc->status);
 				}
