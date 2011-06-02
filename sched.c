@@ -23,12 +23,34 @@ typedef struct
 	pid_t pid;
 	priority_t priority;	/* Important for message queuing */
 	status_t status;
+
+	/* sched */
+	time_t periodicity;
+	time_t next_exec;
+
 	process_t process;
-	//time_t next_exec;
 } sched_process_t;
 
 sched_process_t processes[PROCESS_MAX];
 sched_process_t *cur_proc = NULL;
+
+/******************************************************************************/
+
+static pid_t get_first_pid()
+{
+	for (int i=0; i < PROCESS_MAX; i++) {
+		if (processes[i].status == INIT)
+			return i;
+	}
+	return -1;
+}
+
+static int sched_pid_is_free(pid_t pid)
+{
+	return pid < PROCESS_MAX && processes[pid].status == INIT;
+}
+
+/******************************************************************************/
 
 errno_t sched_proc_pause(pid_t pid)
 {
@@ -75,9 +97,15 @@ void sched_start()
 	}
 }
 
-errno_t sched_add_process(pid_t pid, process_t process)
+errno_t sched_add_process(process_t process, time_t periodicity, pid_t* _pid)
 {
-	if (processes[pid].status != INIT)
+	pid_t pid;
+	
+	if (!pid)
+		return -EACCES;
+
+	pid = get_first_pid();
+	if (!sched_pid_is_free(pid))
 		return -EACCES;
 
 	if (!process.init ||
@@ -91,8 +119,11 @@ errno_t sched_add_process(pid_t pid, process_t process)
 	if (processes[pid].process.init)
 		processes[pid].process.init();
 
+	processes[pid].periodicity = periodicity;
+	processes[pid].next_exec = get_time(); /* schedule for ASAP */
 	processes[pid].status = STARTED;
-
+	
+	*_pid = pid;
 	return -EOK;
 }
 

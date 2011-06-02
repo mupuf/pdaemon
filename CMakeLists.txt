@@ -5,6 +5,8 @@ project (PDAEMON)
 file(GLOB pdaemon_SOURCES
 "*.c" "*.h")
 
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=c99")
+
 option(SIMULATION "Use the simulation" ON)
 if (${SIMULATION})
 	file(GLOB pdaemon_simul_SOURCES "simul/*.c" "simul/*.h")

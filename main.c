@@ -4,6 +4,7 @@
 
 void init()
 {
+	pid_t fan_pid;
 	process_t tmp_process;
 
 	sched_init();
@@ -15,13 +16,14 @@ void init()
 			proc_fan_periodic_task,
 			proc_fan_packet_recv) == -EOK)
 	{
-		sched_add_process(1, tmp_process);
+		sched_add_process(tmp_process, 100, &fan_pid);
 	}
 
 	sched_start();
 }
 
 #ifdef SIMULATION
+#include "simul/nva.h"
 int main(int argc, char** argv)
 {
 	nva_init();
