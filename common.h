@@ -34,8 +34,6 @@ typedef unsigned __int64 u64;
 #else
 typedef unsigned long long u64;
 #endif
-//typedef u64 time_t;
-#include <time.h>
 
 /* Primitive function definition */
 u32 mmio_rd32(u32 address);
@@ -45,13 +43,14 @@ void irq_on();
 void irq_off();
 
 /* More complicated functions */
-time_t get_time();
-
 #ifdef SIMULATION
 	#include <stdio.h>
+	#include <time.h>
 #else
+	typedef u64 time_t;
 	void printf(const char *blabla, ...);
 #endif
 
+time_t get_time();
 
 #endif

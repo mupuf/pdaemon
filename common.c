@@ -46,5 +46,5 @@ time_t get_time()
 		low = mmio_rd32(NV04_PTIMER_TIME_0);
 		high2 = mmio_rd32(NV04_PTIMER_TIME_1);
 	} while (high1 != high2);
-	return (((time_t)high2) << 32) | (time_t)low;
+	return ((((time_t)high2) << 32) | (time_t)low >> 5)*10;
 }
