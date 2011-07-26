@@ -1,6 +1,8 @@
 #ifndef __COMMON_H_
 #define __COMMON_H_
 
+#include "regs.h"
+
 #define NULL 0
 
 #define PROCESS_ID_LENGTH 20
@@ -34,23 +36,78 @@ typedef unsigned __int64 u64;
 #else
 typedef unsigned long long u64;
 #endif
+typedef u64 ptime_t;
 
-/* Primitive function definition */
-u32 mmio_rd32(u32 address);
-void mmio_wr32(u32 address, u32 value);
-
-void irq_on();
-void irq_off();
-
-/* More complicated functions */
 #ifdef SIMULATION
-	#include <stdio.h>
-	#include <time.h>
+#define NVA_CARD 0
+#include <stdio.h>
+#include "simul/nva.h"
+        static inline u32 mmio_rd32(u32 address)
+        {
+                return nva_rd32(NVA_CARD, address);
+        }
+
+        static inline void mmio_wr32(u32 address, u32 value)
+        {
+                nva_wr32(NVA_CARD, address, value);
+        }
+
+        int irq_activated = 1;
+        void irq_on() { irq_activated = 1; }
+        void irq_off() { irq_activated = 0; }
 #else
-	typedef u64 time_t;
-	void printf(const char *blabla, ...);
+        int printf(const char *blabla, ...) { return 0; }
+        static inline void mmio_wr32(u32 addr, u32 val)
+        {
+            __asm__ volatile ("iowr\tI[%0] %1" :: "r"(addr << 6), "r"(val));
+        }
+
+        static inline u32 mmio_rd32(u32 addr)
+        {
+            int x;
+            __asm__ volatile ("iord\t%0 I[%1]" :"=r"(x) : "r"(addr << 6));
+            return x;
+        }
+
+        static inline void mmio_wr32_i(u32 addr, u32 i, u32 val)
+        {
+            __asm__ volatile ("iowr\tI[%0] %1" :: "r"(addr << 6 + i * 4), "r"(val));
+        }
+
+        static inline u32 mmio_rd32_i(u32 addr, u32 i)
+        {
+            int x;
+            __asm__ volatile ("iord\t%0 I[%1]" :"=r"(x) : "r"(addr << 6 + i * 4));
+            return x;
+        }
+
+        void irq_on()
+        {
+        }
+
+        void irq_off()
+        {
+        }
 #endif
 
-time_t get_time();
+static inline ptime_t get_time()
+{
+        ptime_t low;
+
+        /* From kmmio dumps on nv28 this looks like how the blob does this.
+        * It reads the high dword twice, before and after.
+        * The only explanation seems to be that the 64-bit timer counter
+        * advances between high and low dword reads and may corrupt the
+        * result. Not confirmed.
+        */
+        ptime_t high2 = mmio_rd32(NV04_PTIMER_TIME_1);
+        ptime_t high1;
+        do {
+                high1 = high2;
+                low = mmio_rd32(NV04_PTIMER_TIME_0);
+                high2 = mmio_rd32(NV04_PTIMER_TIME_1);
+        } while (high1 != high2);
+        return ((((ptime_t)high2) << 32) | (ptime_t)low >> 5);
+}
 
 #endif
