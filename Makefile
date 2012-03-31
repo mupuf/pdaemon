@@ -1,23 +1,22 @@
-TARGET = pdaemon
+all: run nva3_pdaemon.out.fuc
+.PHONY: clean
 
-CLANG = clang
-CLANG_FLAGS = -m32 -emit-llvm -S -O1
-ENVYAS = envyas
-ENVYAS_FLAGS = -m fuc
-LLC = llc
-LLC_FLAGS = -march=nvfuc
-LLVM2ENVYAS = ./fucc-scripts/llvm2envyas.pl
-HEX2BIN = ./fucc-scripts/hex2bin.pl
-CAT = cat
-BOOT_S = ./fucc-scripts/boot.S
+ET=../new_envytools
+RM=/bin/rm
 
-all: main.c
-	$(CLANG) $< -o $(TARGET).bc $(CLANG_FLAGS)
-	$(LLC) $(TARGET).bc -o $(TARGET).s $(LLC_FLAGS)
-	$(LLVM2ENVYAS) $(TARGET).s -c $(TARGET).tmp -d $(TARGET).data.S
-	$(CAT) $(BOOT_S) $(TARGET).tmp > $(TARGET).S
-	$(ENVYAS) -i $(TARGET).S $(ENVYAS_FLAGS) > $(TARGET).bin
-	$(HEX2BIN) $(TARGET).data.S $(TARGET).data.bin
+CFLAGS= -I$(ET)/include -Wall -g -O
+LDFLAGS= -L$(ET)/build/nva -lnva -lpciaccess
+ED2AS=$(ET)/build/envydis/envyas -w -m fuc -V nva3
+ED2DIS=$(ET)/build/envydis/envydis -w -m fuc -V nva3
 
 clean:
-	rm -f $(TARGET).* *~ 
+	-$(RM) nva3_pdaemon.fuc.h
+
+nva3_pdaemon.fuc.h: clean nva3_pdaemon.fuc
+	$(ED2AS) -a nva3_pdaemon.fuc -o nva3_pdaemon.fuc.h
+
+nva3_pdaemon.out.fuc: nva3_pdaemon.fuc
+	$(ED2AS) nva3_pdaemon.fuc | $(ED2DIS) -d 24 > out.fuc
+
+run: run.c nva3_pdaemon.fuc.h
+	$(CC) run.c -o run $(CFLAGS) $(LDFLAGS)
