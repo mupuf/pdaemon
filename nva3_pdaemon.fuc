@@ -1,3 +1,21 @@
+/* This code was greatly inspired by mlankhorst's */
+
+/* The calling conventions are simple:
+ * - $r0 = 0
+ * - Function parameters are passed in $r10-15
+ * - Return value is passed in $r10
+ * - A function shouldn't modify $r0-$r9 unless it restores their original values afterwards (push/pop)
+ * - That's it for now
+ */
+
+/* some notes about the envyas/fuc syntax:
+ * - You cannot load a 32 bits immediate into a reg, you need to do:
+ * 	movw $rx (value & 0xffff)
+ * 	sethi $rx (value & 0xffff0000)
+ *
+ * - Indexed access (I[$rx + imm]). imm is limited to 0x3fc.
+ */
+
 section #nva3_pdaemon_data
 /* memory map
  * start	stop		purpose
@@ -9,23 +27,94 @@ equ #data_stack 0x400
 b8 0xfe
 align 0x400
 
-equ #data_dispatch 0x0
-b8 0xfe
-align 0x400
+/* nothing to store here for the moment, but let's reserve some space */
+dispatch_data: b32 0xfe
+skip 0x1c
 
+dispatch_ring: b32 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff 0xff
+align 0x400
 
 section #nva3_pdaemon_code
 init:
-	/* deactivate interrupt 0 and 1 */
-	bclr $flags ie0
-	bclr $flags ie1
+	/* force $r0 to 0 */
+	clear b32 $r0
 
 	/* set the stack pointer */
-	mov $r3 #data_stack
-	mov $sp $r3
+	mov $r1 #data_stack
+	mov $sp $r1
+
+	/* set the interrupt vectors */
+	mov $r1 #iv
+	mov $iv0 $r1
+	mov $iv1 $r1
+
+	/* route all IRQs to the fuc vector 0: iowr(INTR_ROUTING, 0x0) */
+	mov $r1 0x700
+	sethi $r1 0x0
+	clear b32 $r2
+	iowrs I[$r1] $r2
+
+	/* enable FIFO interrupts: iowr(INTR_EN_SET, 0x800) */
+	mov $r1 0x400
+	sethi $r1 0x0
+	movw $r2 0x800
+	sethi $r2 0x0
+	iowrs I[$r1] $r2
+
+	/* enable interrupts on FIFO 0: mmwrs(FIFO_INTR_EN, 0x1) */
+	movw $r10 0xa4c4
+	sethi $r10 0x100000
+	movw $r11 0x1
+	sethi $r11 0x0
+	call #mmwrs
+
+	/* deactivate traps and activate iv0/1 */
+	bclr $flags ta
+	bset $flags ie0
+	bset $flags ie1
 
 	bra #main
 	exit
+
+iv:
+	/* $r1 = iord(INTR) */
+	iord $r1 I[$r0 + 0x200]
+
+	/* $r2 = mmio_rd(0x10a688) */
+	movw $r10 0xa688
+	sethi $r10 0x100000
+	call #mmrd
+	mov b32 $r2 $r10
+
+	// mmio_wr(0x10a4a0, 0)
+	movw $r10 0xa4a0
+	sethi $r10 0x100000
+	clear b32 $r11
+	call #mmwrs
+
+	// mmio_wr(0x10a4b0, 0)
+	movw $r10 0xa4b0
+	sethi $r10 0x100000
+	clear b32 $r11
+	call #mmwrs
+
+	/* ack FIFO_PENDING */
+	movw $r10 0xa4c0
+	sethi $r10 0x100000
+	mov $r11 1
+	call #mmwrs
+
+	/* ack the subirq */
+	movw $r10 0xa668
+	sethi $r10 0x100000
+	clear b32 $r11
+	call #mmwrs
+
+	/* ack the IRQ */
+	mov $r3 -1
+	iowrs I[$r0 + 0x100] $r3
+
+	iret
 
 /* mmio sync:
  * In:	None
@@ -92,16 +181,6 @@ mmrd:
 	ret
 
 main:
-	// $r10 = mmio_rd(0x9400)
-	movw $r10 0x9400
-	sethi $r10 0x0
-	call #mmrd
-
-	// mmio_wr(0x9420, $r10)
-	mov b32 $r11 $r10
-	movw $r10 0x9420
-	sethi $r10 0x0
-	call #mmwrs
-
+	/* tight looooooooooooooooooooooop */
 	bra #main
 align 256

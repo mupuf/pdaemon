@@ -43,13 +43,10 @@ static void pdaemon_upload(unsigned cnum) {
 		nva_wr32(cnum, 0x10a184, nva3_pdaemon_code[i]);
 	}
 
-	printf("PDAEMON: status = %x, intr = %x\n", nva_rd32(cnum, 0x10a04c), nva_rd32(cnum, 0x10a008));
-
 	/* launch */
 	nva_wr32(cnum, 0x10a104, 0x0);
 	nva_wr32(cnum, 0x10a10c, 0x0);
 	nva_wr32(cnum, 0x10a100, 0x2);
-	printf("PDAEMON started: status = %x\n", nva_rd32(cnum, 0x10a04c));
 }
 
 int main(int argc, char **argv)
@@ -75,7 +72,10 @@ int main(int argc, char **argv)
 	}
 
 	pdaemon_upload(cnum);
-	usleep(100000);
-	data_segment_dump(cnum, 0x0, 0x404);
+	while(1) {
+		printf("PDAEMON: status = %x, intr = %x\n", nva_rd32(cnum, 0x10a04c), nva_rd32(cnum, 0x10a008));
+		data_segment_dump(cnum, 0x0, 0x10);
+		usleep(1000000);
+	}
 	return 0;
 }
