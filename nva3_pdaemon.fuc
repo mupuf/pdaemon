@@ -110,14 +110,14 @@ init:
 	mov $r1 #iv
 	mov $iv0 $r1
 	mov $iv1 $r1
-
-	// mmio_wr(FIFO_PUT, 0)
+	
+	// mmio_wr(FIFO_PUT, dispatch_ring)
 	movw $r10 0xa4a0
 	sethi $r10 0x100000
 	mov $r11 #dispatch_ring
 	call #mmwrs
 
-	// mmio_wr(FIFO_GET, 0)
+	// mmio_wr(FIFO_GET, dispatch_ring)
 	movw $r10 0xa4b0
 	sethi $r10 0x100000
 	mov $r11 #dispatch_ring
@@ -146,7 +146,7 @@ init:
 	/* deactivate traps and activate iv0/1 */
 	bclr $flags ta
 	bset $flags ie0
-	bset $flags ie1
+	bset $flags ie0
 
 	bra #main
 	exit
@@ -175,6 +175,8 @@ iv:
 	mov $r1 $flags
 	push $r1
 
+	/* TODO: deactivate IRQs */
+
 	/* $r1 = iord(INTR) */
 	iord $r1 I[$r0 + 0x200]
 
@@ -184,11 +186,15 @@ iv:
 	call #mmrd
 	mov b32 $r2 $r10
 
+	/* TODO: reactivate IRQs */
+
 	/* TODO: Actually check if we should call dispatch :D */
 
 	call #dispatch
 
 	/* TODO: Maybe dispatch should ACK the IRQ on its own, ideas? */
+
+	/* TODO: deactivate IRQs */
 
 	/* ack FIFO_PENDING */
 	movw $r10 0xa4c0
@@ -205,6 +211,8 @@ iv:
 	/* ack the IRQ */
 	mov $r3 -1
 	iowrs I[$r0 + 0x100] $r3
+
+	/* TODO: reactivate IRQs */
 
 	/* restore the context */
 	pop $r1
@@ -289,6 +297,17 @@ mmrd:
 	movw $r15 0xe900
 	sethi $r15 0x10000
 	iord $r10 I[$r15]
+	ret
+	
+/* chipset
+ * In: 	None
+ * Out:	$r10: the chipset
+ */
+chipset:
+	clear b32 $r10
+	call #mmrd
+	shr b32 $r10 $r10 20
+	and $r10 $r10 0xff
 	ret
 
 /* dispatch: read from the dispatch ring buffer
