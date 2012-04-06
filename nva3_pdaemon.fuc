@@ -113,7 +113,7 @@ init:
 	mov $sp $r1
 
 	/* set the interrupt vectors */
-	mov $r1 #iv
+	mov $r1 #isr
 	mov $iv0 $r1
 	mov $iv1 $r1
 
@@ -161,7 +161,7 @@ init:
  * In: 	None
  * Out:	None
  */
-iv:
+isr:
 	/* save the current context */
 	push $r1
 	push $r2
@@ -192,29 +192,32 @@ iv:
 	call #mmrd
 	mov b32 $r2 $r10
 
-	/* TODO: reactivate IRQs */
+	/* line 11 ? */
+	xbit $r3 $r1 11
+	cmpu b8 $r3 1
+	bra ne #isr_dispatch_next
 
-	/* TODO: Actually check if we should call dispatch :D */
+	/* line 11: subline 1 ? */
+	xbit $r3 $r2 1
+	cmpu b8 $r3 1
+	bra ne #isr_dispatch_next
 
+	/* that's an internal FIFO IRQ */
 	call #dispatch
 
-	/* TODO: Maybe dispatch should ACK the IRQ on its own, ideas? */
-
-	/* TODO: deactivate IRQs */
-
-	/* ack FIFO_PENDING */
-	movw $r10 0xa4c0
+isr_dispatch_next:
+	/* reload the interrupt state to check we handled everything */
+	iord $r1 I[$r0 + 0x200] // $r1 = iord(INTR)
+	movw $r10 0xa688
 	sethi $r10 0x100000
-	mov $r11 1
-	call #mmwrs
+	call #mmrd
+	mov b32 $r2 $r10 // $r2 = mmio_rd(0x10a688)
 
-	/* ack the subirq */
-	movw $r10 0xa668
-	sethi $r10 0x100000
-	clear b32 $r11
-	call #mmwrs
+	/* display the current interrupt state */
+	st b32 D[$r0 + 4] $r1
+	st b32 D[$r0 + 8] $r2
 
-	/* ack the IRQ */
+	/* ack all the IRQs */
 	mov $r3 -1
 	iowrs I[$r0 + 0x100] $r3
 
@@ -465,6 +468,16 @@ dispatch:
 	bra #dispatch
 
 dispatch_exit:
+	/* ack FIFO_PENDING */
+	movw $r10 0xa4c0
+	sethi $r10 0x100000
+	mov $r11 1
+	call #mmwrs
+
+	/* ack the dispatch IRQ */
+	mov $r3 0x800
+	iowrs I[$r0 + 0x100] $r3
+
 	ret
 
 /* fan_dispatch: fan_mgmt's dispatch handler

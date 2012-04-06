@@ -176,7 +176,7 @@ int main(int argc, char **argv)
 	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
 	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
 	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 1, NULL, 0x48);	// TODO/bug: wrap around problem on PDAEMON
+	pdaemon_send_cmd(cnum, 1, NULL, 0x48);	// TODO/bug: wrap around problem on PDAEMON*/
 
 	usleep(1000);
 	printf("\n");
