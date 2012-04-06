@@ -56,6 +56,7 @@ ptr_data_stack_end: b32 #stack_end
 ptr_dispatch_pid_table: b32 #dispatch_pid_table
 ptr_dispatch_ring: b32 #dispatch_ring
 ptr_dispatch_data: b32 #dispatch_data
+ptr_rdispatch_ring: b32 #rdispatch_ring
 ptr_fan_name: b32 #fan_name
 ptr_hwsq_name: b32 #hwsq_name
 
@@ -66,8 +67,9 @@ section #nva3_pdaemon_data
  * ------------------------------------
  * 0x0		0x400		stack
  * 0x400	0x800		dispatch
- * 0x800	0x900		fan_mgmt
- * 0x900	0x1000		hwsq
+ * 0x800	0xa00		rdispatch
+ * 0xa00	0xb00		fan_mgmt
+ * 0xb00	0xc00		hwsq
  */
 /* stack */
 stack_begin: b8 0xfe
@@ -88,12 +90,16 @@ dispatch_ring:		b32 0xff 0xff 0xff 0xff
 dispatch_data: b32 0xdeadbeef
 align 0x400
 
+/* rdispatch */
+rdispatch_ring: b32 0xdeadbabe
+skip 0x1fc
+
 /* fan_mgmt */
-fan_name: b8 0x66 0x61 0x6e 0x5f 0x6d 0x67 0x6d 0x74 0x0 0x0 /* fan_mgmt */
+fan_name: b8 0x66 0x61 0x6e 0x5f 0x6d 0x67 0x6d 0x74 0x0 0x0 0x0 0x0 /* fan_mgmt */
 align 0x100
 
 /* hwsq */
-hwsq_name: b8 0x68 0x77 0x73 0x71 0x0 0x0 0x0 0x0 0x0 0x0 0x0 /* hwsq */
+hwsq_name: b8 0x68 0x77 0x73 0x71 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 /* hwsq */
 align 0x100
 
 
@@ -110,7 +116,7 @@ init:
 	mov $r1 #iv
 	mov $iv0 $r1
 	mov $iv1 $r1
-	
+
 	// mmio_wr(FIFO_PUT, dispatch_ring)
 	movw $r10 0xa4a0
 	sethi $r10 0x100000
@@ -298,7 +304,7 @@ mmrd:
 	sethi $r15 0x10000
 	iord $r10 I[$r15]
 	ret
-	
+
 /* chipset
  * In: 	None
  * Out:	$r10: the chipset
@@ -309,6 +315,93 @@ chipset:
 	shr b32 $r10 $r10 20
 	and $r10 $r10 0xff
 	ret
+
+/* get_time
+ * In: 	None
+ * Out:	$r10: TIME_HIGH
+ *      $r11: TIME_LOW
+ */
+get_time:
+	/* $r11 = iord(TIME_HIGH) */
+	clear b32 $r10
+	movw $r10 0xc00
+	iord $r11 I[$r10]
+
+	/* $r12 = mmrd(TIME_LOW) */
+	clear b32 $r10
+	movw $r10 0xb00
+	iord $r12 I[$r10]
+
+	/* $r13 = mmrd(TIME_HIGH) */
+	clear b32 $r10
+	movw $r10 0xc00
+	iord $r13 I[$r10]
+
+	/* no overflow happened? */
+	cmpu b32 $r11 $r13
+	bra ne #get_time
+
+	/* $r10 = TIME_HIGH; $r11 = TIME_LOW */
+	mov b32 $r10 $r13
+	mov b32 $r11 $r12
+	ret
+
+/* memcpy:
+ * In: 	$r10: dst
+ * 	$r11: src
+ * 	$r12: length
+ * Out:	None
+ */
+memcpy:
+	/* return when length == 0 */
+	cmpu b32 $r12 0
+	bra e #memcpy_exit
+
+	/* dst[0] = src[0] */
+	ld b8 $r13 D[$r11]
+	st b8 D[$r10] $r13
+
+	/* inc $r10 and $r11 then dec $r12 */
+	add b32 $r10 1
+	add b32 $r11 1
+	sub b32 $r12 1
+
+	bra #memcpy
+memcpy_exit:
+	ret
+
+/* strncpy:
+ * In: 	$r10: dst
+ * 	$r11: src
+ * 	$r12: max_length
+ * Out:	None
+ */
+strncpy:
+	/* return when length == 0 */
+	cmpu b32 $r12 0
+	bra e #memcpy_exit
+
+	/* dst[0] = src[0] */
+	ld b8 $r13 D[$r11]
+	st b8 D[$r10] $r13
+
+	/* inc $r10 and $r11 then dec $r12 */
+	add b32 $r10 1
+	add b32 $r11 1
+	sub b32 $r12 1
+
+	/* if $r13 = '\0', return */
+	cmpu b32 $r13 0
+	bra e #memcpy_exit
+
+	bra #memcpy
+strncpy_exit:
+	ret
+
+// TODO: sleep, deferred task, periodic timer
+
+
+
 
 /* dispatch: read from the dispatch ring buffer
  * In: 	None
@@ -331,10 +424,19 @@ dispatch:
 	cmpu b32 $r2 $r1
 	bra e #dispatch_exit
 
-	/* $r3 = get the pid at FIFO_GET */
+	/* $r3 = pid from FIFO_GET */
 	clear b32 $r3
 	ld b8 $r3 D[$r2 + 3]
 	shr b8 $r3 4
+
+	/* $r4 = packet size from FIFO_GET */
+	clear b32 $r4
+	ld b16 $r4 D[$r2 + 2]
+	and $r4 0xfff
+
+	/* $r5 = packet ptr from FIFO_GET */
+	clear b32 $r5
+	ld b16 $r5 D[$r2 + 0]
 
 	/* $r5 = dispatch_pid_table[pid] */
 	clear b32 $r4
@@ -346,7 +448,8 @@ dispatch:
 	ld b32 $r5 D[$r4]		// $r5 = *$r4
 
 	/* if $r5 then $r5() */
-	mov b32 $r10
+	mov b32 $r10 $r4
+	mov b32 $r11 $r5
 	call $r5
 
 	/* bump FIFO_GET: mmio_wr(FIFO_GET, dispatch_ring + ($r2 + 4) % 0x40) */
@@ -365,7 +468,8 @@ dispatch_exit:
 	ret
 
 /* fan_dispatch: fan_mgmt's dispatch handler
- * In: 	$r10: command's header
+ * In: 	$r10: packet size
+ * 	$r11: packet ptr
  * Out:	None
  */
 fan_dispatch:
@@ -374,7 +478,8 @@ fan_dispatch:
 	ret
 
 /* hwsq_dispatch: hwsq's dispatch handler
- * In: 	$r10: command's header
+ * In: 	$r10: packet size
+ * 	$r11: packet ptr
  * Out:	None
  */
 hwsq_dispatch:

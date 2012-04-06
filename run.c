@@ -101,7 +101,7 @@ static bool pdaemon_send_cmd(unsigned int cnum, uint8_t pid, uint32_t *data, uin
 		 * the buffer then wait for enough space to be available.
 		 */
 
-		printf("pdaemon_send_cmd: running out of data space, waiting on fifo commands %x to finish\n",
+		printf("pdaemon_send_cmd: running out of data space, waiting on fifo commands 0x%x to finish\n",
 		       get_index);
 
 		do {
@@ -176,9 +176,9 @@ int main(int argc, char **argv)
 	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
 	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
 	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 1, NULL, 0x48);
+	pdaemon_send_cmd(cnum, 1, NULL, 0x48);	// TODO/bug: wrap around problem on PDAEMON
 
-	usleep(10000);
+	usleep(1000);
 	printf("\n");
 
 	pdaemon_RB_state_dump(cnum);
