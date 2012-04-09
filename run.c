@@ -4,8 +4,9 @@
 #include "nva3_pdaemon.fuc.h"
 
 typedef enum { false = 0, true = 1} bool;
+typedef enum { get = 0, set = 1} resource_op;
 
-static void data_segment_dump(unsigned int cnum, uint16_t base, uint32_t length)
+static void data_segment_dump(unsigned int cnum, uint16_t base, uint16_t length)
 {
 	uint32_t reg, i;
 
@@ -22,7 +23,7 @@ static void data_segment_dump(unsigned int cnum, uint16_t base, uint32_t length)
 	printf("\n");
 }
 
-static void data_segment_upload(unsigned int cnum, uint16_t base,
+static void data_segment_upload_u32(unsigned int cnum, uint16_t base,
 				uint32_t *data, uint16_t length)
 {
 	uint32_t i;
@@ -36,6 +37,28 @@ static void data_segment_upload(unsigned int cnum, uint16_t base,
 		nva_wr32(cnum, 0x10a1cc, data[i]);
 }
 
+static void data_segment_upload_u8(unsigned int cnum, uint16_t base,
+				uint8_t *data, uint16_t length)
+{
+	uint32_t i, tmp = 0;
+	base &= 0xfffc; /* make sure it is 32 bits aligned */
+
+	if (!data)
+		return;
+
+	nva_wr32(cnum,0x10a1c8, 0x01000000 | base);
+	printf("length = %i\n", length);
+	for (i = 0; i < length; i++) {
+		if (i > 0 && i % 4 == 0) {
+			nva_wr32(cnum, 0x10a1cc, tmp);
+			tmp = 0;
+		}
+		tmp |= (data[i] << (i % 4) * 8);
+	}
+	if (length % 4 != 0)
+		nva_wr32(cnum, 0x10a1cc, tmp);
+}
+
 static void pdaemon_upload(unsigned int cnum) {
 	int i;
 
@@ -47,7 +70,7 @@ static void pdaemon_upload(unsigned int cnum) {
 	nva_wr32(cnum, 0x10a014, 0xffffffff); /* disable all interrupts */
 
 	/* data upload */
-	data_segment_upload(cnum, 0, nva3_pdaemon_data,
+	data_segment_upload_u32(cnum, 0, nva3_pdaemon_data,
 			  sizeof(nva3_pdaemon_data)/sizeof(*nva3_pdaemon_data));
 
 	/* code upload */
@@ -72,7 +95,7 @@ static void pdaemon_RB_state_dump(unsigned int cnum)
 	printf("\n");
 }
 
-static bool pdaemon_send_cmd(unsigned int cnum, uint8_t pid, uint32_t *data, uint16_t length)
+static bool pdaemon_send_cmd(unsigned int cnum, uint8_t pid, uint32_t query_header, uint8_t *data, uint16_t data_length)
 {
 	static uint16_t data_base[16] = { 0 };
 	uint16_t dispatch_ring_base_addr = nva3_pdaemon_ptrs[3];
@@ -87,8 +110,11 @@ static bool pdaemon_send_cmd(unsigned int cnum, uint8_t pid, uint32_t *data, uin
 	uint8_t next_put_index = (next_put - dispatch_ring_base_addr) / 4;
 	uint8_t get_index = (get - dispatch_ring_base_addr) / 4;
 
-	uint32_t header = ((pid & 0xf) << 28) | ((length & 0xfff) << 16) | (dispatch_data_base_addr & 0xffff);
-	int i;
+	uint32_t header = ((pid & 0xf) << 28);
+	uint32_t length = data_length;
+
+	if (query_header > 0)
+		length += 4;
 
 	/* find some available space */
 	if (length > dispatch_data_size)
@@ -100,8 +126,7 @@ static bool pdaemon_send_cmd(unsigned int cnum, uint8_t pid, uint32_t *data, uin
 		 * and the end of the buffer. We need to rewind to the begining of
 		 * the buffer then wait for enough space to be available.
 		 */
-
-		printf("pdaemon_send_cmd: running out of data space, waiting on fifo commands 0x%x to finish\n",
+		printf("pdaemon_send_cmd: running out of data space, waiting on fifo command 0x%x to finish\n",
 		       get_index);
 
 		do {
@@ -112,24 +137,46 @@ static bool pdaemon_send_cmd(unsigned int cnum, uint8_t pid, uint32_t *data, uin
 		data_base[put_index] = 0;
 		data_base[next_put_index] = length;
 	}
+
+	/* align data_base[next_put_index] */
+	if ((data_base[next_put_index] % 4) != 0)
+		data_base[next_put_index] = (data_base[next_put_index] / 4 * 4) + 4;
+
+	/* generate the header */
+	header |= ((length & 0xfff) << 16) | (dispatch_data_base_addr & 0xffff);
 	header += data_base[put_index];
 
-	/* copy the data to the available space */
-	data_segment_upload(cnum, data_base[put_index], data, length);
+	/* copy the query header to the available space */
+	data_segment_upload_u32(cnum,
+			    dispatch_data_base_addr + data_base[put_index],
+			    &query_header, 1);
 
-	/*printf("send_cmd: put_index=%x get_index=%x: ", put_index, get_index);
-	for (i = 0; i < 16; i++)
-		printf("%03x ", data_base[i]);
-	printf("\n");*/
+	/* copy the data to the available space */
+	if (data) {
+		data_segment_upload_u8(cnum,
+			    dispatch_data_base_addr + data_base[put_index] + 4,
+			    data, data_length);
+	}
 
 	/* wait for some space in the ring buffer */
 	while (next_put == nva_rd32(cnum, 0x10a4b0));
 
 	/* push the commands */
-	data_segment_upload(cnum, put, &header, 1);
+	data_segment_upload_u32(cnum, put, &header, 1);
 	nva_wr32(cnum, 0x10a4a0, next_put);
 
 	return true;
+}
+
+static bool pdaemon_resource_get_set(int cnum, uint8_t pid, resource_op op, uint16_t id, uint8_t *buf, uint16_t size)
+{
+	uint32_t header = 0;
+
+	header |= (op << 31);
+	header |= (size & 0x7fff) << 16;
+	header |= id;
+
+	return pdaemon_send_cmd(cnum, pid, header, buf, size);
 }
 
 int main(int argc, char **argv)
@@ -161,28 +208,21 @@ int main(int argc, char **argv)
 	data_segment_dump(cnum, 0x0, 0x10);
 
 	printf("\n");
-	pdaemon_send_cmd(cnum, 1, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 2, NULL, 0x48);
-	pdaemon_send_cmd(cnum, 1, NULL, 0x48);	// TODO/bug: wrap around problem on PDAEMON*/
+
+	pdaemon_resource_get_set(cnum, 1, get, 0, NULL, 0x10);
+	pdaemon_resource_get_set(cnum, 1, set, 0, (uint8_t*)"mupuf", 6);
+	pdaemon_resource_get_set(cnum, 1, get, 0, NULL, 0x10);
+	pdaemon_resource_get_set(cnum, 1, set, 0, (uint8_t*)"mupuf", 6);
+	pdaemon_resource_get_set(cnum, 1, get, 0, NULL, 0x10);
+
 
 	usleep(1000);
 	printf("\n");
 
 	pdaemon_RB_state_dump(cnum);
 	data_segment_dump(cnum, 0x0, 0x10);
+	data_segment_dump(cnum, 0xa00, 0x10);
+	data_segment_dump(cnum, 0x480, 0x40);
 
 	while(1) {
 		printf("PDAEMON: status = %x, intr = %x\n", nva_rd32(cnum, 0x10a04c), nva_rd32(cnum, 0x10a008));

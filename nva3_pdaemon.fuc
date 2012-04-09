@@ -3,13 +3,13 @@
  *
  * This code is meant to be run in PDAEMON. It exports some services to the
  * Host and does some operations such as fan management on its own.
- * Each operations are done in separated "process". Up to 16 process can
+ * Each operations are done in separated "processes". Up to 16 process can
  * execute simultaneously.
  *
  * Some parts of this code are based on Maarten Lankhorst's previous work.
  *
  * = Calling conventions =
- * The calling conventions are simple:
+ * The calling conventions are simple
  * - $r0 = 0
  * - Function parameters are passed in $r10-15
  * - Return value is passed in $r10
@@ -35,6 +35,17 @@
  * 	[dispatch_data, ptr_fan_name[
  * - commands are process-specific and are documented inside the
  * 	process's dispatch function.
+ *
+ * Some processes may want to expose their address space so as the host can
+ * change some parameters. It is done by writing a header at position 0 of the
+ * memory area pointed by cmd_ptr. Some memory space should also be allocated to
+ * store the value to be read/set. The header format is:
+ * 	- u1: type (get = 0, set = 1)
+ * 	- u15: value size
+ * 	- u16 resource_id
+ *
+ * = Pdaemon -> host communication =
+ * TODO
  *
  * Author: Martin Peres <martin.peres@labri.fr>
  */
@@ -214,8 +225,8 @@ isr_dispatch_next:
 	mov b32 $r2 $r10 // $r2 = mmio_rd(0x10a688)
 
 	/* display the current interrupt state */
-	st b32 D[$r0 + 4] $r1
-	st b32 D[$r0 + 8] $r2
+	/*st b32 D[$r0 + 4] $r1
+	st b32 D[$r0 + 8] $r2*/
 
 	/* ack all the IRQs */
 	mov $r3 -1
@@ -403,9 +414,6 @@ strncpy_exit:
 
 // TODO: sleep, deferred task, periodic timer
 
-
-
-
 /* dispatch: read from the dispatch ring buffer
  * In: 	None
  * Out:	None
@@ -441,19 +449,20 @@ dispatch:
 	clear b32 $r5
 	ld b16 $r5 D[$r2 + 0]
 
-	/* $r5 = dispatch_pid_table[pid] */
-	clear b32 $r4
-	movw $r4 #dispatch_pid_table	// $r4 = dispatch_pid_table
-	clear b32 $r5
-	mov b8 $r5 $r3
-	shl b8 $r5 $r5 2		// $r5 = pid * 4
-	add b32 $r4 $r5			// $r4 = addr of dispatch_pid_table[pid]
-	ld b32 $r5 D[$r4]		// $r5 = *$r4
 
-	/* if $r5 then $r5() */
+	/* $r6 = dispatch_pid_table[pid] */
+	clear b32 $r7
+	movw $r7 #dispatch_pid_table	// $r7 = dispatch_pid_table
+	clear b32 $r6
+	mov b8 $r6 $r3
+	shl b8 $r6 $r6 2		// $r6 = pid * 4
+	add b32 $r7 $r6			// $r7 = addr of dispatch_pid_table[pid]
+	ld b32 $r6 D[$r7]		// $r6 = *$r7
+
+	/* if $r6 then $r6() : call the dispatch method of the pid */
 	mov b32 $r10 $r4
 	mov b32 $r11 $r5
-	call $r5
+	call $r6
 
 	/* bump FIFO_GET: mmio_wr(FIFO_GET, dispatch_ring + ($r2 + 4) % 0x40) */
 	movw $r10 0xa4b0
@@ -480,14 +489,97 @@ dispatch_exit:
 
 	ret
 
+/* dispatch_parse_cmd: parse command (get/set)
+ * In: 	$r10: packet size
+ * 	$r11: packet ptr
+ * Out:	$r10: type (get/set) : get == 0, set == 1, error == 0xffffffff
+ * 	$r11: resource_id
+ * 	$r12: resource_size
+ * 	$r13: resource_data
+ */
+dispatch_parse_cmd:
+	/* check packet size and bail out if it is lower than 8 (2 words) */
+	mov b32 $r12 $r10
+	clear b32 $r10
+	sub b32 $r10 $r10 1 // <-- $r10 = 0xffffffff
+	cmpu b32 $r12 4
+	bra g #dispatch_parse_cmd_exit
+	mov b32 $r10 $r12
+
+	/* read the cmd header */
+	ld b32 $r14 D[$r11 + 0]
+
+	/* get the resource data ptr (packet_ptr + 4) */
+	add b32 $r13 $r11 4
+
+	/* get the resource size */
+	ld b16 $r12 D[$r11 + 2]
+	bclr $r12 15 // mask the get/set bit
+
+	/* get the resource id */
+	ld b16 $r11 D[$r11 + 0]
+
+	/* get the type (bit 31 of word 0) */
+	xbit $r10 $r14 31
+
+dispatch_parse_cmd_exit:
+	ret
+
+/* dispatch_exec_cmd: execute a command (get/set)
+ * In:	$r10: type (get/set) : get == 0, set == 1, error == 0xffffffff
+ * 	$r11: resource_id
+ * 	$r12: resource_size
+ * 	$r13; data_ptr
+ * 	$r14: process' data base address
+ * Out:	None
+ */
+dispatch_exec_cmd:
+	/* is it a get command ? */
+	cmpu b32 $r10 0
+	bra e #dispatch_exec_cmd_get
+
+	/* is it a set command ?*/
+	cmpu b32 $r10 1
+	bra e #dispatch_exec_cmd_set
+
+	/* unknown command, bail out */
+	movw $r10 0
+	bra #dispatch_exec_cmd_exit
+
+dispatch_exec_cmd_get:
+	/* copy the resource to the destination: memcpy(dst=$r13, src=$r11+$r14, len=$r12) */
+	mov b32 $r10 $r13
+	add b32 $r11 $r14 $r11
+	call #memcpy
+
+	movw $r10 1
+	bra #dispatch_exec_cmd_exit
+
+dispatch_exec_cmd_set:
+	/* copy the values to the destination: memcpy(dst=$r11+$r14, src=$r13, len=$r12) */
+	add b32 $r10 $r14 $r11
+	mov b32 $r11 $r13
+	call #memcpy
+
+	movw $r10 1
+	bra #dispatch_exec_cmd_exit
+
+dispatch_exec_cmd_exit:
+	ret
+
 /* fan_dispatch: fan_mgmt's dispatch handler
  * In: 	$r10: packet size
  * 	$r11: packet ptr
  * Out:	None
  */
 fan_dispatch:
-	mov $r10 5
-	st b8 D[$r0 + 1]  $r10		// debug
+	/* parse the command header */
+	call #dispatch_parse_cmd
+
+	/* let's exec the command */
+	movw $r14 #fan_name
+	call #dispatch_exec_cmd
+
 	ret
 
 /* hwsq_dispatch: hwsq's dispatch handler
@@ -496,8 +588,12 @@ fan_dispatch:
  * Out:	None
  */
 hwsq_dispatch:
-	mov $r10 6
-	st b8 D[$r0 + 1] $r10		// debug
+	/* parse the command header */
+	call #dispatch_parse_cmd
+
+	/* let's exec the command */
+	movw $r14 #hwsq_name
+	call #dispatch_exec_cmd
 	ret
 
 /* main:
