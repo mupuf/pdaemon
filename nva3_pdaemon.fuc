@@ -32,7 +32,7 @@
  * 	- u12: cmd_size		// size of the command buffer
  * 	- u16: cmd_ptr		// pointer to some place in the data section
  * - the command pointer should point to some place located in
- * 	[dispatch_data, ptr_fan_name[
+ * 	[dispatch_data, ptr_temp_name[
  * - commands are process-specific and are documented inside the
  * 	process's dispatch function.
  *
@@ -64,13 +64,23 @@
 section #nva3_pdaemon_ptrs
 ptr_data_stack_begin: b32 #stack_begin
 ptr_data_stack_end: b32 #stack_end
+ptr_dispatch_fence: b32 #dispatch_fence
 ptr_dispatch_pid_table: b32 #dispatch_pid_table
 ptr_dispatch_ring: b32 #dispatch_ring
 ptr_dispatch_data: b32 #dispatch_data
+ptr_rdispatch_ring_get: b32 #rdispatch_ring_get
 ptr_rdispatch_ring: b32 #rdispatch_ring
-ptr_fan_name: b32 #fan_name
+ptr_temp_name: b32 #temp_name
+ptr_temp_pwm_min: b32 #temp_pwm_min
+ptr_temp_pwm_max: b32 #temp_pwm_max
+ptr_temp_pwm_divisor: b32 #temp_pwm_divisor
+ptr_temp_pwm_cur: b32 #temp_pwm_cur
+ptr_temp_fan_mode: b32 #temp_fan_mode
+ptr_temp_temp_target: b32 #temp_temp_target
+ptr_temp_critical: b32 #temp_critical
+ptr_temp_down_clock: b32 #temp_down_clock
+ptr_temp_fan_boost: b32 #temp_fan_boost
 ptr_hwsq_name: b32 #hwsq_name
-
 
 section #nva3_pdaemon_data
 /* memory map
@@ -79,16 +89,18 @@ section #nva3_pdaemon_data
  * 0x0		0x400		stack
  * 0x400	0x800		dispatch
  * 0x800	0xa00		rdispatch
- * 0xa00	0xb00		fan_mgmt
+ * 0xa00	0xb00		temp_mgmt
  * 0xb00	0xc00		hwsq
  */
 /* stack */
-stack_begin: b8 0xfe
+stack_begin: b8 0x10
 skip 0x3fb
 stack_end: b32 0xdeadcafe
 
 /* dispatch */
-dispatch_pid_table:	b32 0x00 #fan_dispatch #hwsq_dispatch 0x00
+dispatch_fence: b32 0
+skip 0xc
+dispatch_pid_table:	b32 0x00 #temp_dispatch #hwsq_dispatch 0x00
 			b32 0x00 0x00 0x00 0x00
 			b32 0x00 0x00 0x00 0x00
 			b32 0x00 0x00 0x00 0x00
@@ -102,15 +114,26 @@ dispatch_data: b32 0xdeadbeef
 align 0x400
 
 /* rdispatch */
+rdispatch_ring_get: b32 0
+skip 0xc
 rdispatch_ring: b32 0xdeadbabe
-skip 0x1fc
+skip 0x1ec
 
-/* fan_mgmt */
-fan_name: b8 0x66 0x61 0x6e 0x5f 0x6d 0x67 0x6d 0x74 0x0 0x0 0x0 0x0 /* fan_mgmt */
+/* temp_mgmt */
+temp_name: b8 0x74 0x65 0x6d 0x70 0x5f 0x6d 0x67 0x6d 0x74 0x0 0x0 0x0 0x0 0x0 0x0 0x0 /* temp_mgmt */
+temp_pwm_min: b8 30
+temp_pwm_max: b8 100
+temp_pwm_divisor: b16 0x21c
+temp_pwm_cur: b8 30
+temp_fan_mode: b8 2
+temp_temp_target: b8 60
+temp_critical: b8 110
+temp_down_clock: b8 100
+temp_fan_boost: b8 90
 align 0x100
 
 /* hwsq */
-hwsq_name: b8 0x68 0x77 0x73 0x71 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 /* hwsq */
+hwsq_name: b8 0x68 0x77 0x73 0x71 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0/* hwsq */
 align 0x100
 
 
@@ -128,13 +151,13 @@ init:
 	mov $iv0 $r1
 	mov $iv1 $r1
 
-	// mmio_wr(FIFO_PUT, dispatch_ring)
+	/* mmio_wr(FIFO_PUT, dispatch_ring) */
 	movw $r10 0xa4a0
 	sethi $r10 0x100000
 	mov $r11 #dispatch_ring
 	call #mmwrs
 
-	// mmio_wr(FIFO_GET, dispatch_ring)
+	/* mmio_wr(FIFO_GET, dispatch_ring) */
 	movw $r10 0xa4b0
 	sethi $r10 0x100000
 	mov $r11 #dispatch_ring
@@ -159,6 +182,10 @@ init:
 	movw $r11 0x1
 	sethi $r11 0x0
 	call #mmwrs
+
+	ld b32 $r10 D[$r0]
+	add b32 $r10 $r10 1
+	st b32 D[$r0] $r10
 
 	/* deactivate traps and activate iv0/1 */
 	bclr $flags ta
@@ -191,6 +218,10 @@ isr:
 	push $r15
 	mov $r1 $flags
 	push $r1
+
+	ld b32 $r10 D[$r0 + 4]
+	add b32 $r10 $r10 1
+	st b32 D[$r0 + 4] $r10
 
 	/* TODO: deactivate IRQs */
 
@@ -399,7 +430,7 @@ strncpy:
 	ld b8 $r13 D[$r11]
 	st b8 D[$r10] $r13
 
-	/* inc $r10 and $r11 then dec $r12 */
+	/* next byte please! */
 	add b32 $r10 1
 	add b32 $r11 1
 	sub b32 $r12 1
@@ -449,7 +480,6 @@ dispatch:
 	clear b32 $r5
 	ld b16 $r5 D[$r2 + 0]
 
-
 	/* $r6 = dispatch_pid_table[pid] */
 	clear b32 $r7
 	movw $r7 #dispatch_pid_table	// $r7 = dispatch_pid_table
@@ -464,14 +494,22 @@ dispatch:
 	mov b32 $r11 $r5
 	call $r6
 
-	/* bump FIFO_GET: mmio_wr(FIFO_GET, dispatch_ring + ($r2 + 4) % 0x40) */
+	/* bump FIFO_GET: mmio_wr(FIFO_GET, dispatch_ring + (($r2 - dispatch_ring) + 4) % 0x40) */
 	movw $r10 0xa4b0
 	sethi $r10 0x100000
 	mov b32 $r11 $r2
+	sub b32 $r11 #dispatch_ring
 	add b32 $r11 0x4
 	mod $r11 $r11 0x40
 	add b32 $r11 #dispatch_ring
+	st b32 D[$r0 + 12] $r11
 	call #mmwrs
+
+	/* increase DISPATCH_FENCE */
+	movw $r10 #dispatch_fence
+	ld b32 $r11 D[$r10]
+	add b32 $r11 $r11 1
+	st b32 D[$r10] $r11
 
 	/* loop */
 	bra #dispatch
@@ -567,17 +605,17 @@ dispatch_exec_cmd_set:
 dispatch_exec_cmd_exit:
 	ret
 
-/* fan_dispatch: fan_mgmt's dispatch handler
+/* temp_dispatch: temp_mgmt's dispatch handler
  * In: 	$r10: packet size
  * 	$r11: packet ptr
  * Out:	None
  */
-fan_dispatch:
+temp_dispatch:
 	/* parse the command header */
 	call #dispatch_parse_cmd
 
 	/* let's exec the command */
-	movw $r14 #fan_name
+	movw $r14 #temp_name
 	call #dispatch_exec_cmd
 
 	ret

@@ -1,10 +1,32 @@
 #include <stdio.h>
 #include <unistd.h>
+#include <malloc.h>
 #include "nva.h"
 #include "nva3_pdaemon.fuc.h"
 
 typedef enum { false = 0, true = 1} bool;
 typedef enum { get = 0, set = 1} resource_op;
+
+#define PDAEMON_DISPATCH_FENCE 0x00000400
+#define PDAEMON_DISPATCH_RING 0x00000450
+#define PDAEMON_DISPATCH_DATA 0x00000490
+#define PDAEMON_DISPATCH_DATA_SIZE 0x00000370
+
+static bool data_segment_read(unsigned int cnum, uint16_t base, uint16_t length, uint8_t *buf)
+{
+	uint32_t i;
+	uint32_t *b = (uint32_t*)buf;
+
+	if (base != (base & 0xfffc))
+		return false;
+
+	nva_wr32(cnum,0x10a1c8, 0x02000000 | base);
+	for (i = 0; i < length / 4; i++) {
+		b[i] = nva_rd32(cnum, 0x10a1cc);
+	}
+
+	return true;
+}
 
 static void data_segment_dump(unsigned int cnum, uint16_t base, uint16_t length)
 {
@@ -47,7 +69,6 @@ static void data_segment_upload_u8(unsigned int cnum, uint16_t base,
 		return;
 
 	nva_wr32(cnum,0x10a1c8, 0x01000000 | base);
-	printf("length = %i\n", length);
 	for (i = 0; i < length; i++) {
 		if (i > 0 && i % 4 == 0) {
 			nva_wr32(cnum, 0x10a1cc, tmp);
@@ -91,30 +112,46 @@ static void pdaemon_RB_state_dump(unsigned int cnum)
 {
 	printf("PDAEMON's FIFO 0 state: Get(%08x) Put(%08x)\n",
 	       nva_rd32(cnum, 0x10a4b0), nva_rd32(cnum, 0x10a4a0));
-	data_segment_dump(cnum, nva3_pdaemon_ptrs[3], nva3_pdaemon_ptrs[4] - nva3_pdaemon_ptrs[3]);
+	data_segment_dump(cnum, PDAEMON_DISPATCH_RING, PDAEMON_DISPATCH_DATA - PDAEMON_DISPATCH_RING);
 	printf("\n");
 }
 
-static bool pdaemon_send_cmd(unsigned int cnum, uint8_t pid, uint32_t query_header, uint8_t *data, uint16_t data_length)
+struct pdaemon_resource_command {
+	/* in */
+	uint8_t pid;
+	uint32_t query_header;
+	uint8_t *data;
+	uint16_t data_length;
+
+	/* out */
+	uint32_t fence;
+	uint16_t data_addr;
+};
+
+static bool pdaemon_send_cmd(unsigned int cnum, struct pdaemon_resource_command *cmd)
 {
 	static uint16_t data_base[16] = { 0 };
-	uint16_t dispatch_ring_base_addr = nva3_pdaemon_ptrs[3];
-	uint16_t dispatch_data_base_addr = nva3_pdaemon_ptrs[4];
-	uint16_t dispatch_data_size = nva3_pdaemon_ptrs[5] - dispatch_data_base_addr;
+	static uint32_t fence = 0;
+	uint16_t dispatch_ring_base_addr = PDAEMON_DISPATCH_RING;
+	uint16_t dispatch_data_base_addr = PDAEMON_DISPATCH_DATA;
+	uint16_t dispatch_data_size = PDAEMON_DISPATCH_DATA_SIZE;
 
 	uint32_t put = nva_rd32(cnum, 0x10a4a0);
-	uint32_t next_put = nva3_pdaemon_ptrs[3] + ((put + 4) % 0x40);
+	uint32_t next_put = dispatch_ring_base_addr + ((put - dispatch_ring_base_addr + 4) % 0x40);
 	uint32_t get = nva_rd32(cnum, 0x10a4b0);
 
 	uint8_t put_index = (put - dispatch_ring_base_addr) / 4;
 	uint8_t next_put_index = (next_put - dispatch_ring_base_addr) / 4;
 	uint8_t get_index = (get - dispatch_ring_base_addr) / 4;
 
-	uint32_t header = ((pid & 0xf) << 28);
-	uint32_t length = data_length;
+	uint32_t header = ((cmd->pid & 0xf) << 28);
+	uint32_t length = cmd->data_length;
+	uint32_t data_header_length = 0;
 
-	if (query_header > 0)
-		length += 4;
+	if (cmd->query_header > 0) {
+		data_header_length = 4;
+		length += data_header_length;
+	}
 
 	/* find some available space */
 	if (length > dispatch_data_size)
@@ -146,17 +183,21 @@ static bool pdaemon_send_cmd(unsigned int cnum, uint8_t pid, uint32_t query_head
 	header |= ((length & 0xfff) << 16) | (dispatch_data_base_addr & 0xffff);
 	header += data_base[put_index];
 
+	/* bump the fence */
+	fence++;
+
+	/* fill the command structure */
+	cmd->fence = fence;
+	cmd->data_addr = dispatch_data_base_addr + data_base[put_index] + data_header_length;
+
 	/* copy the query header to the available space */
 	data_segment_upload_u32(cnum,
 			    dispatch_data_base_addr + data_base[put_index],
-			    &query_header, 1);
+			    &cmd->query_header, 1);
 
 	/* copy the data to the available space */
-	if (data) {
-		data_segment_upload_u8(cnum,
-			    dispatch_data_base_addr + data_base[put_index] + 4,
-			    data, data_length);
-	}
+	if (cmd->data)
+		data_segment_upload_u8(cnum, cmd->data_addr, cmd->data, cmd->data_length);
 
 	/* wait for some space in the ring buffer */
 	while (next_put == nva_rd32(cnum, 0x10a4b0));
@@ -168,19 +209,53 @@ static bool pdaemon_send_cmd(unsigned int cnum, uint8_t pid, uint32_t query_head
 	return true;
 }
 
-static bool pdaemon_resource_get_set(int cnum, uint8_t pid, resource_op op, uint16_t id, uint8_t *buf, uint16_t size)
+static struct pdaemon_resource_command pdaemon_resource_get_set(int cnum, uint8_t pid, resource_op op, uint16_t id, uint8_t *buf, uint16_t size)
 {
+	struct pdaemon_resource_command cmd;
 	uint32_t header = 0;
 
 	header |= (op << 31);
 	header |= (size & 0x7fff) << 16;
 	header |= id;
 
-	return pdaemon_send_cmd(cnum, pid, header, buf, size);
+	cmd.pid = pid;
+	cmd.query_header = header;
+	cmd.data = buf;
+	cmd.data_length = size;
+
+	pdaemon_send_cmd(cnum, &cmd);
+
+	return cmd;
+}
+
+static bool pdaemon_sync_fence(int cnum, uint32_t waited_fence)
+{
+	uint32_t fence = 0;
+
+	/* wait for the command to be executed */
+	do {
+		data_segment_read(cnum, PDAEMON_DISPATCH_FENCE, 4, (uint8_t*)(&fence));
+	} while(fence < waited_fence);
+
+	return true;
+}
+
+static bool pdaemon_read_resource(int cnum, struct pdaemon_resource_command *cmd, uint8_t *buf)
+{
+	/* wait for the command to be executed */
+	pdaemon_sync_fence(cnum, cmd->fence);
+
+	/* read the data back */
+	data_segment_read(cnum, cmd->data_addr, cmd->data_length, buf);
+
+	return true;
 }
 
 int main(int argc, char **argv)
 {
+	struct pdaemon_resource_command cmd;
+	uint8_t buf[1000];
+
 	if (nva_init()) {
 		fprintf (stderr, "PCI init failure!\n");
 		return 1;
@@ -204,30 +279,16 @@ int main(int argc, char **argv)
 	pdaemon_upload(cnum);
 	usleep(1000);
 
-	pdaemon_RB_state_dump(cnum);
-	data_segment_dump(cnum, 0x0, 0x10);
-
-	printf("\n");
-
-	pdaemon_resource_get_set(cnum, 1, get, 0, NULL, 0x10);
-	pdaemon_resource_get_set(cnum, 1, set, 0, (uint8_t*)"mupuf", 6);
-	pdaemon_resource_get_set(cnum, 1, get, 0, NULL, 0x10);
-	pdaemon_resource_get_set(cnum, 1, set, 0, (uint8_t*)"mupuf", 6);
-	pdaemon_resource_get_set(cnum, 1, get, 0, NULL, 0x10);
-
-
+	cmd = pdaemon_resource_get_set(cnum, 1, get, 0, NULL, 0x10);
 	usleep(1000);
-	printf("\n");
+	pdaemon_read_resource(cnum, &cmd, buf);
+	printf("temp_name: '%s'\n", buf);
 
-	pdaemon_RB_state_dump(cnum);
-	data_segment_dump(cnum, 0x0, 0x10);
-	data_segment_dump(cnum, 0xa00, 0x10);
-	data_segment_dump(cnum, 0x480, 0x40);
+	pdaemon_resource_get_set(cnum, 1, set, 0, (uint8_t*)"mupuf", 6);
 
-	while(1) {
-		printf("PDAEMON: status = %x, intr = %x\n", nva_rd32(cnum, 0x10a04c), nva_rd32(cnum, 0x10a008));
-		data_segment_dump(cnum, 0x0, 0x10);
-		usleep(1000000);
-	}
+	cmd = pdaemon_resource_get_set(cnum, 1, get, 0, NULL, 0x10);
+	pdaemon_read_resource(cnum, &cmd, buf);
+	printf("temp_name: '%s'\n", buf);
+
 	return 0;
 }
