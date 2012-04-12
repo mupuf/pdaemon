@@ -49,7 +49,7 @@ static void data_segment_upload_u32(unsigned int cnum, uint16_t base,
 				uint32_t *data, uint16_t length)
 {
 	uint32_t i;
-	base &= 0xfffc; /* make sure it is 32 bits aligned */
+	base &= 0xfffc; /* make sure it is 32-bits aligned */
 
 	if (!data)
 		return;
@@ -289,6 +289,16 @@ int main(int argc, char **argv)
 	cmd = pdaemon_resource_get_set(cnum, 1, get, 0, NULL, 0x10);
 	pdaemon_read_resource(cnum, &cmd, buf);
 	printf("temp_name: '%s'\n", buf);
+
+	buf[0] = 100;
+	pdaemon_resource_get_set(cnum, 1, set, 0x15, buf, 1);
+
+	usleep(1000000);
+
+	buf[0] = 40;
+	pdaemon_resource_get_set(cnum, 1, set, 0x15, buf, 1);
+
+	data_segment_dump(cnum, 0, 0x10);
 
 	return 0;
 }

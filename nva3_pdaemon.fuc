@@ -74,6 +74,7 @@ ptr_temp_name: b32 #temp_name
 ptr_temp_pwm_min: b32 #temp_pwm_min
 ptr_temp_pwm_max: b32 #temp_pwm_max
 ptr_temp_pwm_divisor: b32 #temp_pwm_divisor
+ptr_temp_pwm_id: b32 #temp_pwm_id
 ptr_temp_pwm_cur: b32 #temp_pwm_cur
 ptr_temp_fan_mode: b32 #temp_fan_mode
 ptr_temp_temp_target: b32 #temp_temp_target
@@ -124,6 +125,7 @@ temp_name: b8 0x74 0x65 0x6d 0x70 0x5f 0x6d 0x67 0x6d 0x74 0x0 0x0 0x0 0x0 0x0 0
 temp_pwm_min: b8 30
 temp_pwm_max: b8 100
 temp_pwm_divisor: b16 0x21c
+temp_pwm_id: b8 0
 temp_pwm_cur: b8 30
 temp_fan_mode: b8 2
 temp_temp_target: b8 60
@@ -502,7 +504,6 @@ dispatch:
 	add b32 $r11 0x4
 	mod $r11 $r11 0x40
 	add b32 $r11 #dispatch_ring
-	st b32 D[$r0 + 12] $r11
 	call #mmwrs
 
 	/* increase DISPATCH_FENCE */
@@ -605,6 +606,12 @@ dispatch_exec_cmd_set:
 dispatch_exec_cmd_exit:
 	ret
 
+/***************************************
+ *                                     *
+ *       Temperature Management        *
+ *                                     *
+ ***************************************/
+
 /* temp_dispatch: temp_mgmt's dispatch handler
  * In: 	$r10: packet size
  * 	$r11: packet ptr
@@ -618,7 +625,81 @@ temp_dispatch:
 	movw $r14 #temp_name
 	call #dispatch_exec_cmd
 
+	/* change the fan speed */
+	call #temp_main
+
 	ret
+
+/* temp_set_pwm: set the fan speed according to the current state of memory
+ * In: 	None (everything is set according to the data address space)
+ * Out:	None
+ */
+temp_set_pwm:
+	push $r1
+	push $r2
+	push $r3
+	push $r4
+
+	/* $r2 = D[pwm_id] */
+	movw $r1 #temp_pwm_id
+	sethi $r1 0
+	clear b32 $r2
+	ld b8 $r2 D[$r1]
+
+	/* $r3 = D[pwm_divs] */
+	movw $r1 #temp_pwm_divisor
+	sethi $r1 0
+	clear b32 $r3
+	ld b16 $r3 D[$r1]
+
+	/* $r4 = D[temp_pwm_cur] */
+	movw $r1 #temp_pwm_cur
+	sethi $r1 0
+	clear b32 $r4
+	ld b8 $r4 D[$r1]
+
+	/* $r4 = ((divs * percent) + 99) / 100 */
+	mulu $r4 $r4 $r3
+	add b32 $r4 99
+	div $r4 $r4 100
+
+	/* mmio_wr(0xe114 + (id*, $r3) */
+	movw $r10 0xe114
+	sethi $r10 0
+	mulu $r11 $r2 8
+	add b32 $r10 $r11
+	mov b32 $r11 $r3
+	call #mmwrs
+
+	/* mmio_wr(PWM_DUTY, $r4 | 0x8000000) */
+	clear b32 $r10
+	movw $r10 0xe118
+	sethi $r10 0
+	mulu $r11 $r2 8
+ 	add b32 $r10 $r11
+	mov b32 $r11 $r4
+	bset $r11 31
+	call #mmwrs
+
+	pop $r4
+	pop $r3
+	pop $r2
+	pop $r1
+	ret
+
+/* temp_main: temp_mgmt's main function
+ * In:	None
+ * Out:	None
+ */
+temp_main:
+	call #temp_set_pwm
+	ret
+
+/***************************************
+ *                                     *
+ *               HWSQ                  *
+ *                                     *
+ ***************************************/
 
 /* hwsq_dispatch: hwsq's dispatch handler
  * In: 	$r10: packet size
@@ -639,6 +720,5 @@ hwsq_dispatch:
  * Out:	None
  */
 main:
-	/* tight looooooooooooooooooooooop */
 	bra #main
 align 256
