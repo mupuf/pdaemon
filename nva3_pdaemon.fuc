@@ -71,11 +71,13 @@ ptr_dispatch_data: b32 #dispatch_data
 ptr_rdispatch_ring_get: b32 #rdispatch_ring_get
 ptr_rdispatch_ring: b32 #rdispatch_ring
 ptr_temp_name: b32 #temp_name
-ptr_temp_pwm_min: b32 #temp_pwm_min
-ptr_temp_pwm_max: b32 #temp_pwm_max
-ptr_temp_pwm_divisor: b32 #temp_pwm_divisor
+ptr_temp_mode_func_ptr: b32 #temp_mode_func_ptr
+ptr_temp_last_updated: b32 #temp_last_updated
 ptr_temp_pwm_id: b32 #temp_pwm_id
 ptr_temp_pwm_cur: b32 #temp_pwm_cur
+ptr_temp_pwm_divisor: b32 #temp_pwm_divisor
+ptr_temp_pwm_min: b32 #temp_pwm_min
+ptr_temp_pwm_max: b32 #temp_pwm_max
 ptr_temp_fan_mode: b32 #temp_fan_mode
 ptr_temp_temp_target: b32 #temp_temp_target
 ptr_temp_critical: b32 #temp_critical
@@ -94,7 +96,7 @@ section #nva3_pdaemon_data
  * 0xb00	0xc00		hwsq
  */
 /* stack */
-stack_begin: b8 0x10
+stack_begin: b8 0xfe
 skip 0x3fb
 stack_end: b32 0xdeadcafe
 
@@ -122,16 +124,19 @@ skip 0x1ec
 
 /* temp_mgmt */
 temp_name: b8 0x74 0x65 0x6d 0x70 0x5f 0x6d 0x67 0x6d 0x74 0x0 0x0 0x0 0x0 0x0 0x0 0x0 /* temp_mgmt */
-temp_pwm_min: b8 30
-temp_pwm_max: b8 100
-temp_pwm_divisor: b16 0x21c
+temp_mode_func_ptr: b16 #temp_control_manual #temp_control_linear #temp_control_linear 0x0
+temp_last_updated: b64 0
 temp_pwm_id: b8 0
 temp_pwm_cur: b8 30
+temp_pwm_divisor: b16 0x21c
+temp_pwm_min: b8 30
+temp_pwm_max: b8 100
 temp_fan_mode: b8 2
 temp_temp_target: b8 60
 temp_critical: b8 110
 temp_down_clock: b8 100
 temp_fan_boost: b8 90
+temp_fan_start: b8 30
 align 0x100
 
 /* hwsq */
@@ -185,10 +190,6 @@ init:
 	sethi $r11 0x0
 	call #mmwrs
 
-	ld b32 $r10 D[$r0]
-	add b32 $r10 $r10 1
-	st b32 D[$r0] $r10
-
 	/* deactivate traps and activate iv0/1 */
 	bclr $flags ta
 	bset $flags ie0
@@ -220,10 +221,6 @@ isr:
 	push $r15
 	mov $r1 $flags
 	push $r1
-
-	ld b32 $r10 D[$r0 + 4]
-	add b32 $r10 $r10 1
-	st b32 D[$r0 + 4] $r10
 
 	/* TODO: deactivate IRQs */
 
@@ -687,12 +684,141 @@ temp_set_pwm:
 	pop $r1
 	ret
 
+/* temp_read_sensor: read the current temperature
+ * In: 	None
+ * Out:	$r10: the temperature in °C
+ */
+temp_read_sensor:
+	/* $r10 = mmio_rd(0x20400) */
+	movw $r10 0x400
+	sethi $r10 0x20000
+	call #mmrd
+	ret
+
+/* temp_control_manual: do not change the fan speed
+ * In:	$r10: current temperature
+ * Out: $r10: the desired fan speed
+ */
+temp_control_manual:
+	/* $r10 = iord(temp_pwm_cur) */
+	mov $r11 #temp_pwm_cur
+	sethi $r11 0
+	clear b32 $r10
+	ld b8 $r10 D[$r11]
+
+	ret
+
+/* temp_control_linear: change linearly
+ * In:	$r10: current temperature
+ * Out: $r10: the desired fan speed
+ */
+temp_control_linear:
+	/* $r13 = iord(temp_fan_start) */
+	mov $r15 #temp_fan_start
+	sethi $r15 0
+	clear b32 $r13
+	ld b8 $r13 D[$r15]
+
+	/* $r12 = iord(temp_fan_boost) */
+	mov $r15 #temp_fan_boost
+	sethi $r15 0
+	clear b32 $r12
+	ld b8 $r12 D[$r15]
+
+	/* normalize cur_temp and fan_boost (sub temp_fan_start) */
+	sub b32 $r10 $r10 $r13
+	sub b32 $r12 $r12 $r13
+
+	/* $r10 = cur_temp * 100 / fan_boost */
+	mulu $r10 $r10 100
+	div $r10 $r10 $r12
+
+	ret
+
 /* temp_main: temp_mgmt's main function
  * In:	None
  * Out:	None
  */
 temp_main:
+	push $r1
+	push $r2
+	push $r3
+	push $r4
+	push $r5
+
+	/* $r1 = iord($r2 = temp_fan_mode) */
+	movw $r2 #temp_fan_mode
+	sethi $r2 0
+	clear b32 $r1
+	ld b8 $r1 D[$r2]
+
+	/* check if the method is supported (id < 4) */
+	cmpu b32 $r1 3
+	bra na #temp_main_fan_method_ok
+
+	/* default to method 2 */
+	movw $r1 2
+	sethi $r1 0
+	st b8 D[$r2] $r1
+
+	/* TODO: report error ? */
+
+temp_main_fan_method_ok:
+
+	/* $r2 = iord(temp_fan_mode[$r1]) */
+	movw $r10 #temp_mode_func_ptr
+	sethi $r10 0
+	mulu $r11 $r1 2
+	add b32 $r11 $r10 $r11
+	ld b16 $r2 D[$r11]
+
+	call #temp_read_sensor
+
+	/* $5 = $r2() // call the right fan method */
+	call $r2
+	mov b32 $r5 $r10
+
+	/* $r3 = iord(temp_pwm_min) */
+	movw $r15 #temp_pwm_min
+	sethi $r15 0
+	clear b32 $r3
+	ld b8 $r3 D[$r15]
+
+	/* $r4 = iord(temp_pwm_max) */
+	movw $r15 #temp_pwm_max
+	sethi $r15 0
+	clear b32 $r4
+	ld b8 $r4 D[$r15]
+
+	/* if $r5 >= $r3 goto fan_set() else $r5 = $r3 */
+	cmpu b32 $r5 $r3
+	bra na #temp_main_fan_set_low
+
+	/* if $r5 <= $r4 goto fan_set() else $r5 = $r4 */
+	cmpu b32 $r5 $r4
+	bra a #temp_main_fan_set_high
+	bra #temp_main_fan_set
+
+temp_main_fan_set_low:
+	mov b32 $r5 $r3
+	bra #temp_main_fan_set
+
+temp_main_fan_set_high:
+	mov b32 $r5 $r4
+
+temp_main_fan_set:
+	/* temp_pwm_cur = $r5 */
+	movw $r10 #temp_pwm_cur
+	sethi $r10 0
+	st b8 D[$r10] $r5
+
 	call #temp_set_pwm
+
+	pop $r5
+	pop $r4
+	pop $r3
+	pop $r2
+	pop $r1
 	ret
 
 /***************************************

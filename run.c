@@ -290,13 +290,17 @@ int main(int argc, char **argv)
 	pdaemon_read_resource(cnum, &cmd, buf);
 	printf("temp_name: '%s'\n", buf);
 
-	buf[0] = 100;
-	pdaemon_resource_get_set(cnum, 1, set, 0x15, buf, 1);
+	/* set the fan in auto mode */
+	buf[0] = 2;
+	pdaemon_resource_get_set(cnum, 1, set, 0x26, buf, 1);
 
-	usleep(1000000);
+	usleep(1000);
 
-	buf[0] = 40;
-	pdaemon_resource_get_set(cnum, 1, set, 0x15, buf, 1);
+	/* try to send him a speed command */
+	buf[0] = 10;
+	pdaemon_resource_get_set(cnum, 1, set, 0x21, buf, 1);
+
+	usleep(1000);
 
 	data_segment_dump(cnum, 0, 0x10);
 
