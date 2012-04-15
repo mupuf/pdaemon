@@ -4,13 +4,37 @@
 #include "nva.h"
 #include "nva3_pdaemon.fuc.h"
 
+typedef uint64_t ptime_t;
+
 typedef enum { false = 0, true = 1} bool;
 typedef enum { get = 0, set = 1} resource_op;
 
-#define PDAEMON_DISPATCH_FENCE 0x00000400
-#define PDAEMON_DISPATCH_RING 0x00000450
-#define PDAEMON_DISPATCH_DATA 0x00000490
+#define PDAEMON_DISPATCH_FENCE 0x00000500
+#define PDAEMON_DISPATCH_RING 0x00000550
+#define PDAEMON_DISPATCH_DATA 0x00000590
 #define PDAEMON_DISPATCH_DATA_SIZE 0x00000370
+
+#define NV04_PTIMER_TIME_0                                 0x00009400
+#define NV04_PTIMER_TIME_1                                 0x00009410
+ptime_t get_time(unsigned int card)
+{
+	ptime_t low;
+
+	/* From kmmio dumps on nv28 this looks like how the blob does this.
+	* It reads the high dword twice, before and after.
+	* The only explanation seems to be that the 64-bit timer counter
+	* advances between high and low dword reads and may corrupt the
+	* result. Not confirmed.
+	*/
+	ptime_t high2 = nva_rd32(card, NV04_PTIMER_TIME_1);
+	ptime_t high1;
+	do {
+		high1 = high2;
+		low = nva_rd32(card, NV04_PTIMER_TIME_0);
+		high2 = nva_rd32(card, NV04_PTIMER_TIME_1);
+	} while (high1 != high2);
+	return ((((ptime_t)high2) << 32) | (ptime_t)low);
+}
 
 static bool data_segment_read(unsigned int cnum, uint16_t base, uint16_t length, uint8_t *buf)
 {
@@ -110,8 +134,11 @@ static void pdaemon_upload(unsigned int cnum) {
 
 static void pdaemon_RB_state_dump(unsigned int cnum)
 {
-	printf("PDAEMON's FIFO 0 state: Get(%08x) Put(%08x)\n",
-	       nva_rd32(cnum, 0x10a4b0), nva_rd32(cnum, 0x10a4a0));
+	uint32_t fence = 0;
+	data_segment_read(cnum, PDAEMON_DISPATCH_FENCE, 4, (uint8_t*)(&fence));
+
+	printf("PDAEMON's FIFO 0 state: Get(%08x) Put(%08x) Fence(%08x)\n",
+	       nva_rd32(cnum, 0x10a4b0), nva_rd32(cnum, 0x10a4a0), fence);
 	data_segment_dump(cnum, PDAEMON_DISPATCH_RING, PDAEMON_DISPATCH_DATA - PDAEMON_DISPATCH_RING);
 	printf("\n");
 }
@@ -280,29 +307,33 @@ int main(int argc, char **argv)
 	usleep(1000);
 
 	cmd = pdaemon_resource_get_set(cnum, 1, get, 0, NULL, 0x10);
-	usleep(1000);
 	pdaemon_read_resource(cnum, &cmd, buf);
 	printf("temp_name: '%s'\n", buf);
 
 	pdaemon_resource_get_set(cnum, 1, set, 0, (uint8_t*)"mupuf", 6);
 
-	cmd = pdaemon_resource_get_set(cnum, 1, get, 0, NULL, 0x10);
+	cmd = pdaemon_resource_get_set(cnum, 0, get, 0x10, NULL, 0x4);
 	pdaemon_read_resource(cnum, &cmd, buf);
-	printf("temp_name: '%s'\n", buf);
+	printf("core_frequency: %i\n", buf[0] | buf[1] << 8 | buf[2] << 16 | buf[3] << 24);
 
 	/* set the fan in auto mode */
 	buf[0] = 2;
 	pdaemon_resource_get_set(cnum, 1, set, 0x26, buf, 1);
 
-	usleep(1000);
+	while (1) {
+		/* set the fan in auto mode */
+		/*buf[0] = 2;
+		pdaemon_resource_get_set(cnum, 1, set, 0x26, buf, 1);*/
 
-	/* try to send him a speed command */
-	buf[0] = 10;
-	pdaemon_resource_get_set(cnum, 1, set, 0x21, buf, 1);
+		data_segment_dump(cnum, 0, 0x10);
 
-	usleep(1000);
+		cmd = pdaemon_resource_get_set(cnum, 1, get, 0x21, NULL, 0x4);
+		pdaemon_read_resource(cnum, &cmd, buf);
 
-	data_segment_dump(cnum, 0, 0x10);
+		printf("%llu: temp=%i pwm=%i\n", get_time(cnum), nva_rd32(cnum, 0x20400), buf[0]);
+
+		usleep(100000);
+	}
 
 	return 0;
 }

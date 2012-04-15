@@ -90,20 +90,26 @@ section #nva3_pdaemon_data
  * start	stop		purpose
  * ------------------------------------
  * 0x0		0x400		stack
- * 0x400	0x800		dispatch
- * 0x800	0xa00		rdispatch
- * 0xa00	0xb00		temp_mgmt
- * 0xb00	0xc00		hwsq
+ * 0x400	0x500		core
+ * 0x500	0x900		dispatch
+ * 0xa00	0xb00		rdispatch
+ * 0xb00	0xc00		temp_mgmt
+ * 0xc00	0xd00		hwsq
  */
 /* stack */
 stack_begin: b8 0xfe
 skip 0x3fb
 stack_end: b32 0xdeadcafe
 
+/* core */
+core_name: b8 0x63 0x6f 0x72 0x65 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0
+core_pdaemon_freq: b32 202000000 // 202MHz
+align 0x100
+
 /* dispatch */
 dispatch_fence: b32 0
 skip 0xc
-dispatch_pid_table:	b32 0x00 #temp_dispatch #hwsq_dispatch 0x00
+dispatch_pid_table:	b32 #core_dispatch #temp_dispatch #hwsq_dispatch 0x00
 			b32 0x00 0x00 0x00 0x00
 			b32 0x00 0x00 0x00 0x00
 			b32 0x00 0x00 0x00 0x00
@@ -124,7 +130,7 @@ skip 0x1ec
 
 /* temp_mgmt */
 temp_name: b8 0x74 0x65 0x6d 0x70 0x5f 0x6d 0x67 0x6d 0x74 0x0 0x0 0x0 0x0 0x0 0x0 0x0 /* temp_mgmt */
-temp_mode_func_ptr: b16 #temp_control_manual #temp_control_linear #temp_control_linear 0x0
+temp_mode_func_ptr: b16 #temp_control_manual #temp_control_linear #temp_control_linear #temp_control_target
 temp_last_updated: b64 0
 temp_pwm_id: b8 0
 temp_pwm_cur: b8 30
@@ -190,10 +196,21 @@ init:
 	sethi $r11 0x0
 	call #mmwrs
 
+	/* init the fence value */
+	movw $r10 #dispatch_fence
+	sethi $r10 0
+ 	clear b32 $r11
+	st b32 D[$r10] $r11
+
 	/* deactivate traps and activate iv0/1 */
 	bclr $flags ta
 	bset $flags ie0
 	bset $flags ie0
+
+	/* sleep_ns(4s) */
+	movw $r10 0x2800
+	sethi $r10 0xee6b0000
+	call #sleep_ns
 
 	bra #main
 	exit
@@ -442,13 +459,62 @@ strncpy:
 strncpy_exit:
 	ret
 
-// TODO: sleep, deferred task, periodic timer
+/* sleep: wait $r10 ns
+ * In: 	$r10: number of ns
+ * Out:	None
+ */
+sleep_ns:
+	push $r1
+	push $r2
+	mov b32 $r1 $r10
+
+	/* $r11 = TIME_LOW */
+	call #get_time
+	mov b32 $r2 $r10
+
+	/* $r1 += $r11 */
+	add b32 $r1 $r1 $r11
+
+	/* $r2 += overflow bit */
+	xbit $r13 $flags o
+	add b32 $r2 $r2 $r13
+
+	/* wait for TIME_LOW > $r1 */
+sleep_ns_loop:
+	call #get_time
+	cmpu b32 $r11 $r1
+	bra na #sleep_ns_loop
+
+	st b32 D[$r0 + 4] $r10
+	st b32 D[$r0 + 8] $r2
+
+	cmpu b32 $r2 $r10
+	bra ne #sleep_ns_loop
+
+	st b32 D[$r0 + 0xc] $r1
+
+	pop $r2
+	pop $r1
+	ret
+
+// TODO: deferred task, periodic timer
 
 /* dispatch: read from the dispatch ring buffer
  * In: 	None
  * Out:	None
  */
 dispatch:
+	push $r1
+	push $r2
+	push $r3
+	push $r4
+	push $r5
+	push $r6
+	push $r7
+	push $r8
+	push $r9
+
+dispatch_loop:
 	// $r1 = mmio_rd(FIFO_PUT, 0)
 	movw $r10 0xa4a0
 	sethi $r10 0x100000
@@ -505,12 +571,13 @@ dispatch:
 
 	/* increase DISPATCH_FENCE */
 	movw $r10 #dispatch_fence
+	sethi $r10 0
 	ld b32 $r11 D[$r10]
 	add b32 $r11 $r11 1
 	st b32 D[$r10] $r11
 
 	/* loop */
-	bra #dispatch
+	bra #dispatch_loop
 
 dispatch_exit:
 	/* ack FIFO_PENDING */
@@ -522,6 +589,16 @@ dispatch_exit:
 	/* ack the dispatch IRQ */
 	mov $r3 0x800
 	iowrs I[$r0 + 0x100] $r3
+
+	pop $r9
+	pop $r8
+	pop $r7
+	pop $r6
+	pop $r5
+	pop $r4
+	pop $r3
+	pop $r2
+	pop $r1
 
 	ret
 
@@ -605,6 +682,26 @@ dispatch_exec_cmd_exit:
 
 /***************************************
  *                                     *
+ *               Core                  *
+ *                                     *
+ ***************************************/
+
+/* core_dispatch: core's dispatch handler
+ * In: 	$r10: packet size
+ * 	$r11: packet ptr
+ * Out:	None
+ */
+core_dispatch:
+	/* parse the command header */
+	call #dispatch_parse_cmd
+
+	/* let's exec the command */
+	movw $r14 #core_name
+	call #dispatch_exec_cmd
+	ret
+
+/***************************************
+ *                                     *
  *       Temperature Management        *
  *                                     *
  ***************************************/
@@ -623,7 +720,7 @@ temp_dispatch:
 	call #dispatch_exec_cmd
 
 	/* change the fan speed */
-	call #temp_main
+	//call #temp_main
 
 	ret
 
@@ -708,7 +805,7 @@ temp_control_manual:
 
 	ret
 
-/* temp_control_linear: change linearly
+/* temp_control_linear: change the fan speed linearly with temperature
  * In:	$r10: current temperature
  * Out: $r10: the desired fan speed
  */
@@ -735,6 +832,73 @@ temp_control_linear:
 
 	ret
 
+/* idiv_32: divide a positive/negative number by a positive number
+ * In:	$r10
+ * 	$r11
+ * Out: $r10: $r10 / $r11
+ */
+idiv_32:
+	/* is it a negative number ? */
+	xbit $r12 $r10 31
+	bra nz #div_32_neg
+
+	/* positive, do the division and return */
+	div $r10 $r10 $r11
+
+	ret
+
+div_32_neg:
+	/* $r10 = (($r10 * -1) / $r11) * -1 */
+	clear b32 $r12
+	sub b32 $r12 $r12 1
+	muls $r10 $r10 $r12
+	div $r10 $r10 $r11
+	muls $r10 $r10 $r12
+
+	ret
+
+
+/* temp_control_target: change the fan speed to keep the board to a certain temperature
+ * In:	$r10: current temperature
+ * Out: $r10: the desired fan speed
+ */
+temp_control_target:
+	push $r1
+	push $r2
+
+	/* $r1 = iord(temp_temp_target) */
+	mov $r15 #temp_temp_target
+	sethi $r15 0
+	clear b32 $r11
+	ld b8 $r1 D[$r15]
+
+	/* $r2 = iord(temp_pwm_cur) */
+	mov $r15 #temp_pwm_cur
+	sethi $r15 0
+	clear b32 $r2
+	ld b8 $r2 D[$r15]
+
+	/* slope = 1/2; hysteresis at target_temp = +/- 1°C */
+	sub b32 $r10 $r10 $r1
+	movw $r11 2
+	sethi $r11 0
+	call #idiv_32
+
+	/* speed += deltaTemp/2 */
+	add b32 $r10 $r2 $r10
+
+	/* sanity check: $r10 must be >= 0 */
+	cmp b32 $r10 0
+	bra ge #temp_control_target_exit
+
+	clear b32 $r10
+
+temp_control_target_exit:
+
+	pop $r2
+	pop $r1
+	ret
+
 /* temp_main: temp_mgmt's main function
  * In:	None
  * Out:	None
@@ -754,7 +918,7 @@ temp_main:
 
 	/* check if the method is supported (id < 4) */
 	cmpu b32 $r1 3
-	bra na #temp_main_fan_method_ok
+	bra na #temp_main_sanity_check_ok
 
 	/* default to method 2 */
 	movw $r1 2
@@ -763,7 +927,24 @@ temp_main:
 
 	/* TODO: report error ? */
 
-temp_main_fan_method_ok:
+temp_main_sanity_check_ok:
+	/* $r3 = $r10 = temp_read_sensor() */
+	call #temp_read_sensor
+	mov b32 $r3 $r10
+
+	/* set the desired fan speed to 100% for the moment */
+	movw $r5 100
+	sethi $r5 0
+
+	/* $r12 = iord(temp_fan_boost) */
+	mov $r15 #temp_fan_boost
+	sethi $r15 0
+	clear b32 $r12
+	ld b8 $r12 D[$r15]
+
+	/* if $r3 (cur_temp) >= $r12 (fan_boost) then $r5 = 100 */
+	cmpu b32 $r3 $r12
+	bra a #temp_main_fan_set
 
 	/* $r2 = iord(temp_fan_mode[$r1]) */
 	movw $r10 #temp_mode_func_ptr
@@ -772,9 +953,8 @@ temp_main_fan_method_ok:
 	add b32 $r11 $r10 $r11
 	ld b16 $r2 D[$r11]
 
-	call #temp_read_sensor
-
 	/* $5 = $r2() // call the right fan method */
+	call #temp_read_sensor
 	call $r2
 	mov b32 $r5 $r10
 
@@ -846,5 +1026,13 @@ hwsq_dispatch:
  * Out:	None
  */
 main:
+	/* sleep_ns(4s) */
+	movw $r10 0xca00
+	sethi $r10 0x3b9a0000
+	call #sleep_ns
+
+	/* call the tasks */
+	call #temp_main
+
 	bra #main
 align 256
