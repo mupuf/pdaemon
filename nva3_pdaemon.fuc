@@ -64,6 +64,8 @@
 section #nva3_pdaemon_ptrs
 ptr_data_stack_begin: b32 #stack_begin
 ptr_data_stack_end: b32 #stack_end
+ptr_core_name: b32 #core_name
+ptr_core_pdaemon_freq: b32 #core_pdaemon_freq
 ptr_dispatch_fence: b32 #dispatch_fence
 ptr_dispatch_pid_table: b32 #dispatch_pid_table
 ptr_dispatch_ring: b32 #dispatch_ring
@@ -514,6 +516,16 @@ dispatch:
 	push $r8
 	push $r9
 
+	/* ack FIFO_PENDING */
+	movw $r10 0xa4c0
+	sethi $r10 0x100000
+	mov $r11 1
+	call #mmwrs
+
+	/* ack the dispatch IRQ */
+	mov $r3 0x800
+	iowrs I[$r0 + 0x100] $r3
+
 dispatch_loop:
 	// $r1 = mmio_rd(FIFO_PUT, 0)
 	movw $r10 0xa4a0
@@ -580,15 +592,6 @@ dispatch_loop:
 	bra #dispatch_loop
 
 dispatch_exit:
-	/* ack FIFO_PENDING */
-	movw $r10 0xa4c0
-	sethi $r10 0x100000
-	mov $r11 1
-	call #mmwrs
-
-	/* ack the dispatch IRQ */
-	mov $r3 0x800
-	iowrs I[$r0 + 0x100] $r3
 
 	pop $r9
 	pop $r8
@@ -846,7 +849,6 @@ idiv_32:
 	div $r10 $r10 $r11
 
 	ret
-
 div_32_neg:
 	/* $r10 = (($r10 * -1) / $r11) * -1 */
 	clear b32 $r12

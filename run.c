@@ -159,6 +159,7 @@ static bool pdaemon_send_cmd(unsigned int cnum, struct pdaemon_resource_command 
 {
 	static uint16_t data_base[16] = { 0 };
 	static uint32_t fence = 0;
+	uint32_t fence_get = 0;
 	uint16_t dispatch_ring_base_addr = PDAEMON_DISPATCH_RING;
 	uint16_t dispatch_data_base_addr = PDAEMON_DISPATCH_DATA;
 	uint16_t dispatch_data_size = PDAEMON_DISPATCH_DATA_SIZE;
@@ -186,12 +187,16 @@ static bool pdaemon_send_cmd(unsigned int cnum, struct pdaemon_resource_command 
 	else if ((dispatch_data_size - data_base[put_index]) > length)
 		data_base[next_put_index] = data_base[put_index] + length;
 	else {
+		data_segment_read(cnum, PDAEMON_DISPATCH_FENCE, 4, (uint8_t*)(&fence_get));
+
 		/* there is not enough space available between the current position
 		 * and the end of the buffer. We need to rewind to the begining of
 		 * the buffer then wait for enough space to be available.
 		 */
-		printf("pdaemon_send_cmd: running out of data space, waiting on fifo command 0x%x to finish\n",
-		       get_index);
+		printf("pdaemon_send_cmd: running out of data space, "
+			"waiting on fifo command 0x%x to finish: "
+			"PDAEMON's FIFO 0 state: Get(%08x) Put(%08x) Fence(%08x)\n",
+		       get_index, nva_rd32(cnum, 0x10a4b0), nva_rd32(cnum, 0x10a4a0), fence_get);
 
 		do {
 			get = nva_rd32(cnum, 0x10a4b0);
@@ -332,7 +337,7 @@ int main(int argc, char **argv)
 
 		printf("%llu: temp=%i pwm=%i\n", get_time(cnum), nva_rd32(cnum, 0x20400), buf[0]);
 
-		usleep(100000);
+		usleep(10000);
 	}
 
 	return 0;
