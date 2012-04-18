@@ -321,23 +321,21 @@ int main(int argc, char **argv)
 	pdaemon_read_resource(cnum, &cmd, buf);
 	printf("core_frequency: %i\n", buf[0] | buf[1] << 8 | buf[2] << 16 | buf[3] << 24);
 
+	/* set the target temperature */
+	buf[0] = 55;
+	pdaemon_resource_get_set(cnum, 1, set, 0x27, buf, 1);
+
 	/* set the fan in auto mode */
-	buf[0] = 2;
+	buf[0] = 3;
 	pdaemon_resource_get_set(cnum, 1, set, 0x26, buf, 1);
 
 	while (1) {
-		/* set the fan in auto mode */
-		/*buf[0] = 2;
-		pdaemon_resource_get_set(cnum, 1, set, 0x26, buf, 1);*/
-
-		data_segment_dump(cnum, 0, 0x10);
-
 		cmd = pdaemon_resource_get_set(cnum, 1, get, 0x21, NULL, 0x4);
 		pdaemon_read_resource(cnum, &cmd, buf);
 
-		printf("%llu: temp=%i pwm=%i\n", get_time(cnum), nva_rd32(cnum, 0x20400), buf[0]);
+		printf("%u ms: temp=%i pwm=%i\n", get_time(cnum) / 1000000, nva_rd32(cnum, 0x20400), buf[0]);
 
-		usleep(10000);
+		usleep(5000000);
 	}
 
 	return 0;
