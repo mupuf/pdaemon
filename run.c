@@ -3,6 +3,7 @@
 #include <malloc.h>
 #include "nva.h"
 #include "nva3_pdaemon.fuc.h"
+#include "nvd9_pdaemon.fuc.h"
 
 typedef uint64_t ptime_t;
 
@@ -106,6 +107,8 @@ static void data_segment_upload_u8(unsigned int cnum, uint16_t base,
 
 static void pdaemon_upload(unsigned int cnum) {
 	int i;
+	uint32_t code_size;
+	uint32_t *code;
 
 	/* reboot PDAEMON */
 	nva_mask(cnum, 0x200, 0x2000, 0);
@@ -115,21 +118,37 @@ static void pdaemon_upload(unsigned int cnum) {
 	nva_wr32(cnum, 0x10a014, 0xffffffff); /* disable all interrupts */
 
 	/* data upload */
-	data_segment_upload_u32(cnum, 0, nva3_pdaemon_data,
+	if (nva_cards[cnum].chipset < 0xd9) {
+		data_segment_upload_u32(cnum, 0, nva3_pdaemon_data,
 			  sizeof(nva3_pdaemon_data)/sizeof(*nva3_pdaemon_data));
-
+	} else {
+		data_segment_upload_u32(cnum, 0, nvd9_pdaemon_data,
+			  sizeof(nvd9_pdaemon_data)/sizeof(*nvd9_pdaemon_data));
+	}
+	
 	/* code upload */
+	if (nva_cards[cnum].chipset < 0xd9) {
+		code_size = sizeof(nva3_pdaemon_code)/sizeof(*nva3_pdaemon_code);
+		code = nva3_pdaemon_code;
+	} else {
+		code_size = sizeof(nvd9_pdaemon_code)/sizeof(*nvd9_pdaemon_code);
+		code = nvd9_pdaemon_code;
+	}
 	nva_wr32(cnum, 0x10a180, 0x01000000);
-	for (i = 0; i < sizeof(nva3_pdaemon_code)/sizeof(*nva3_pdaemon_code); ++i) {
+	for (i = 0; i < code_size; ++i) {
 		if (i % 64 == 0)
 			nva_wr32(cnum, 0x10a188, i >> 6);
-		nva_wr32(cnum, 0x10a184, nva3_pdaemon_code[i]);
+		nva_wr32(cnum, 0x10a184, code[i]);
 	}
 
 	/* launch */
 	nva_wr32(cnum, 0x10a104, 0x0);
 	nva_wr32(cnum, 0x10a10c, 0x0);
 	nva_wr32(cnum, 0x10a100, 0x2);
+	
+	printf("Uploaded pdaemon microcode: data = %x bytes, code = %x bytes\n",
+			sizeof(nva3_pdaemon_data)/sizeof(*nva3_pdaemon_data),
+			sizeof(nva3_pdaemon_code)/sizeof(*nva3_pdaemon_code));
 }
 
 static void pdaemon_RB_state_dump(unsigned int cnum)
@@ -310,8 +329,11 @@ int main(int argc, char **argv)
 
 	pdaemon_upload(cnum);
 	usleep(1000);
+	data_segment_dump(cnum, 0, 0x10);
 
 	cmd = pdaemon_resource_get_set(cnum, 1, get, 0, NULL, 0x10);
+	usleep(1000);
+	data_segment_dump(cnum, 0, 0x10);
 	pdaemon_read_resource(cnum, &cmd, buf);
 	printf("temp_name: '%s'\n", buf);
 

@@ -50,7 +50,6 @@
  * Author: Martin Peres <martin.peres@labri.fr>
  */
 
-
 /*
  * some notes to self about the envyas/fuc syntax:
  * - You cannot load a 32 bits immediate into a reg, you need to do:
@@ -60,8 +59,35 @@
  * - Indexed access (I[$rx + imm]). imm is limited to 0x3fc.
  */
 
+ifdef(`NVA3', `define(`IOADDR', `movw $2 $1
+	sethi $2 0
+	shl b32 $2 6')'
+,define(`IOADDR', `movw $2 $1
+	sethi $2 0')
+)
+
+/* define the IO reg addresses */
+equ #io_INTR_CLEAR	0x004
+equ #io_INTR		0x008
+equ #io_INTR_EN_SET	0x010
+equ #io_INTR_ROUTING	0x01c
+equ #io_TIME_LOW	0x02c
+equ #io_TIME_HIGH	0x030
+equ #io_FIFO_0_PUT	0x4a0
+equ #io_FIFO_0_GET	0x4b0
+equ #io_FIFO_INTR	0x4c0
+equ #io_FIFO_INTR_EN	0x4c4
+equ #io_INTR11		0x688
+equ #io_MMIO_ADDR	0x7a0
+equ #io_MMIO_VAL	0x7a4
+equ #io_MMIO_CTRL	0x7ac
+
 /* store some important pointers */
+ifdef(`NVA3',
 section #nva3_pdaemon_ptrs
+,
+section #nvd9_pdaemon_ptrs
+)
 ptr_data_stack_begin: b32 #stack_begin
 ptr_data_stack_end: b32 #stack_end
 ptr_core_name: b32 #core_name
@@ -87,7 +113,11 @@ ptr_temp_down_clock: b32 #temp_down_clock
 ptr_temp_fan_boost: b32 #temp_fan_boost
 ptr_hwsq_name: b32 #hwsq_name
 
+ifdef(`NVA3',
 section #nva3_pdaemon_data
+,
+section #nvd9_pdaemon_data
+)
 /* memory map
  * start	stop		purpose
  * ------------------------------------
@@ -152,11 +182,15 @@ hwsq_name: b8 0x68 0x77 0x73 0x71 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x
 align 0x100
 
 
+ifdef(`NVA3',
 section #nva3_pdaemon_code
+,
+section #nvd9_pdaemon_code
+)
 init:
 	/* force $r0 to 0 */
 	clear b32 $r0
-
+	
 	/* set the stack pointer */
 	mov $r1 #stack_end
 	mov $sp $r1
@@ -166,39 +200,34 @@ init:
 	mov $iv0 $r1
 	mov $iv1 $r1
 
-	/* mmio_wr(FIFO_PUT, dispatch_ring) */
-	movw $r10 0xa4a0
-	sethi $r10 0x100000
-	mov $r11 #dispatch_ring
-	call #mmwrs
+	/* iowr(FIFO_PUT[0], dispatch_ring) */
+	IOADDR(`#io_FIFO_0_PUT', `$r1')
+	mov $r2 #dispatch_ring
+	iowrs I[$r1] $r2
 
-	/* mmio_wr(FIFO_GET, dispatch_ring) */
-	movw $r10 0xa4b0
-	sethi $r10 0x100000
-	mov $r11 #dispatch_ring
-	call #mmwrs
+	/* iowr(FIFO_GET[0], dispatch_ring) */
+	IOADDR(`#io_FIFO_0_GET', `$r1')
+	mov $r2 #dispatch_ring
+	iowrs I[$r1] $r2
 
 	/* route all IRQs to the fuc vector 0: iowr(INTR_ROUTING, 0x0) */
-	mov $r1 0x700
-	sethi $r1 0x0
+	IOADDR(`#io_INTR_ROUTING', `$r1')
 	clear b32 $r2
 	iowrs I[$r1] $r2
 
 	/* enable FIFO interrupts: iowr(INTR_EN_SET, 0x800) */
-	mov $r1 0x400
-	sethi $r1 0x0
+	IOADDR(`#io_INTR_EN_SET', `$r1')
 	movw $r2 0x800
 	sethi $r2 0x0
 	iowrs I[$r1] $r2
 
-	/* enable interrupts on FIFO 0: mmwrs(FIFO_INTR_EN, 0x1) */
-	movw $r10 0xa4c4
-	sethi $r10 0x100000
-	movw $r11 0x1
-	sethi $r11 0x0
-	call #mmwrs
+	/* enable interrupts on FIFO 0: iowr(FIFO_INTR_EN, 0x1) */
+	IOADDR(`#io_FIFO_INTR_EN', `$r1')
+	movw $r2 0x1
+	sethi $r2 0x0
+	iowrs I[$r1] $r2
 
-	/* init the fence value */
+	/* init the fence value to 0 */
 	movw $r10 #dispatch_fence
 	sethi $r10 0
  	clear b32 $r11
@@ -235,17 +264,20 @@ isr:
 	push $r15
 	mov $r1 $flags
 	push $r1
+	
+	ld b32 $r1 D[$r0+4]
+	add b32 $r1 $r1 1
+	st b32 D[$r0+4] $r1
 
 	/* TODO: deactivate IRQs */
 
 	/* $r1 = iord(INTR) */
-	iord $r1 I[$r0 + 0x200]
+	IOADDR(`#io_INTR', `$r3')
+	iord $r1 I[$r3]
 
-	/* $r2 = mmio_rd(0x10a688) */
-	movw $r10 0xa688
-	sethi $r10 0x100000
-	call #mmrd
-	mov b32 $r2 $r10
+	/* $r2 = iord(INTR11) */
+	IOADDR(`#io_INTR11', `$r3')
+	iord $r2 I[$r3]
 
 	/* line 11 ? */
 	xbit $r3 $r1 11
@@ -262,19 +294,23 @@ isr:
 
 isr_dispatch_next:
 	/* reload the interrupt state to check we handled everything */
-	iord $r1 I[$r0 + 0x200] // $r1 = iord(INTR)
-	movw $r10 0xa688
-	sethi $r10 0x100000
-	call #mmrd
-	mov b32 $r2 $r10 // $r2 = mmio_rd(0x10a688)
+	IOADDR(`#io_INTR', `$r1')
+	iord $r1 I[$r1] // $r1 = iord(INTR)
+	IOADDR(`#io_INTR11', `$r2')
+	iord $r2 I[$r2] // $r2 = iord(INTR11)
 
 	/* display the current interrupt state */
-	/*st b32 D[$r0 + 4] $r1
-	st b32 D[$r0 + 8] $r2*/
+	/*st b32 D[$r0 + 8] $r1
+	st b32 D[$r0 + 0xc] $r2*/
 
 	/* ack all the IRQs */
+	IOADDR(`#io_INTR_CLEAR', `$r1')
 	mov $r3 -1
-	iowrs I[$r0 + 0x100] $r3
+	iowrs I[$r1] $r3
+	
+	IOADDR(`#io_INTR11', `$r1')
+	clear b32 $r3
+	iowrs I[$r1] $r3
 
 	/* TODO: reactivate IRQs */
 
@@ -299,41 +335,47 @@ isr_dispatch_next:
 
 	iret
 
-/* mmio sync:
+/* mmsync: mmio sync
  * In:	None
  * Out:	None
  */
 mmsync:
 	mov $r9 0
 	mmloop_:
-		movw $r15 0xeb00
-		sethi $r15 0x10000
+		IOADDR(`#io_MMIO_CTRL', `$r15')
 		iord $r15 I[$r15]
 		add b32 $r9 $r9 1
 		extr $r15 $r15 12:14
 		bra nz #mmloop_
 	ret
 
-/* mmio write sync:
+/* mmwr: mmio write:
  * In: 	$r10: addr
  * 	$r11: value
  * Out:	None
  */
 mmwr:
 	call #mmsync
-	movw $r15 0xe800
-	sethi $r15 0x10000
+	
+	/* iowr(MMIO_ADDR, $r10) */
+	IOADDR(`#io_MMIO_ADDR', `$r15')
 	iowr I[$r15] $r10
-	add b32 $r15 0x100
+
+	/* iowr(MMIO_VALUE, $r11) */
+	IOADDR(`#io_MMIO_VAL', `$r15')
 	iowr I[$r15] $r11
-	add b32 $r15 0x200
+
+	/* iowr(MMIO_CTRL, 0x100f2) : trigger the write */
+	IOADDR(`#io_MMIO_CTRL', `$r15')
 	mov $r11 0xf2
 	sethi $r11 0x10000
-	iowr I[$r15] $r11
-	iord $r11 I[$r15]
+	iowrs I[$r15] $r11
+	
+	/* TODO: check for errors */
+
 	ret
 
-/* mmio write sync:
+/* mmwrs: mmio write sync
  * In: 	$r10: addr
  * 	$r11: value
  * Out:	None
@@ -343,26 +385,31 @@ mmwrs:
 	call #mmsync
 	ret
 
-/* mmio read:
+/* mmrd: mmio read
  * In: 	$r10: addr
  * Out:	$r10: value
  */
 mmrd:
 	call #mmsync
-	movw $r15 0xe800
-	sethi $r15 0x10000
+
+	/* iowr(MMIO_ADDR, $r10) */
+	IOADDR(`#io_MMIO_ADDR', `$r15')
 	iowr I[$r15] $r10
-	add b32 $r15 0x300
+
+	/* iowr(MMIO_CTRL, 0x100f1) : trigger the read */
+	IOADDR(`#io_MMIO_CTRL', `$r15')
 	mov $r11 0xf1
 	sethi $r11 0x10000
-	iowr I[$r15] $r11
-	iord $r11 I[$r15]
-	call #mmsync
-	movw $r15 0xe900
-	sethi $r15 0x10000
-	iord $r10 I[$r15]
-	ret
+	iowrs I[$r15] $r11
 
+	call #mmsync
+
+	/* iowr(MMIO_VALUE, $r11) */
+	IOADDR(`#io_MMIO_VAL', `$r15')
+	iord $r10 I[$r15]
+
+	ret
+	
 /* chipset
  * In: 	None
  * Out:	$r10: the chipset
@@ -381,18 +428,15 @@ chipset:
  */
 get_time:
 	/* $r11 = iord(TIME_HIGH) */
-	clear b32 $r10
-	movw $r10 0xc00
+	IOADDR(`#io_TIME_HIGH', `$r10')
 	iord $r11 I[$r10]
 
-	/* $r12 = mmrd(TIME_LOW) */
-	clear b32 $r10
-	movw $r10 0xb00
+	/* $r12 = iord(TIME_LOW) */
+	IOADDR(`#io_TIME_LOW', `$r10')
 	iord $r12 I[$r10]
 
-	/* $r13 = mmrd(TIME_HIGH) */
-	clear b32 $r10
-	movw $r10 0xc00
+	/* $r13 = iord(TIME_HIGH) */
+	IOADDR(`#io_TIME_HIGH', `$r10')
 	iord $r13 I[$r10]
 
 	/* no overflow happened? */
@@ -510,28 +554,24 @@ dispatch:
 	push $r8
 	push $r9
 
-	/* ack FIFO_PENDING */
-	movw $r10 0xa4c0
-	sethi $r10 0x100000
+	/* ack FIFO_INTR */
+	IOADDR(`#io_FIFO_INTR', `$r10')
 	mov $r11 1
-	call #mmwrs
+	iowrs I[$r10] $r11
 
 	/* ack the dispatch IRQ */
+	IOADDR(`#io_INTR_CLEAR', `$r10')
 	mov $r3 0x800
-	iowrs I[$r0 + 0x100] $r3
+	iowrs I[$r10] $r3
 
 dispatch_loop:
-	// $r1 = mmio_rd(FIFO_PUT, 0)
-	movw $r10 0xa4a0
-	sethi $r10 0x100000
-	call #mmrd
-	mov b32 $r1 $r10
+	/* $r1 = mmio_rd(FIFO_PUT, 0) */
+	IOADDR(`#io_FIFO_0_PUT', `$r10')
+	iord $r1 I[$r10]
 
-	// $r2 = mmio_rd(FIFO_GET, 0)
-	movw $r10 0xa4b0
-	sethi $r10 0x100000
-	call #mmrd
-	mov b32 $r2 $r10
+	/* $r2 = mmio_rd(FIFO_GET, 0) */
+	IOADDR(`#io_FIFO_0_GET', `$r10')
+	iord $r2 I[$r10]
 
 	/* if FIFO_PUT == FIFO_GET then exit */
 	cmpu b32 $r2 $r1
@@ -566,14 +606,12 @@ dispatch_loop:
 	call $r6
 
 	/* bump FIFO_GET: mmio_wr(FIFO_GET, dispatch_ring + (($r2 - dispatch_ring) + 4) % 0x40) */
-	movw $r10 0xa4b0
-	sethi $r10 0x100000
-	mov b32 $r11 $r2
-	sub b32 $r11 #dispatch_ring
-	add b32 $r11 0x4
-	mod $r11 $r11 0x40
-	add b32 $r11 #dispatch_ring
-	call #mmwrs
+	IOADDR(`#io_FIFO_0_GET', `$r1')
+	sub b32 $r2 #dispatch_ring
+	add b32 $r2 0x4
+	mod $r2 $r2 0x40
+	add b32 $r2 #dispatch_ring
+	iowrs I[$r1] $r2
 
 	/* increase DISPATCH_FENCE */
 	movw $r10 #dispatch_fence
@@ -754,7 +792,7 @@ temp_set_pwm:
 	add b32 $r4 99
 	div $r4 $r4 100
 
-	/* mmio_wr(0xe114 + (id*, $r3) */
+	/* mmio_wr(0xe114 + (id * $r3) */
 	movw $r10 0xe114
 	sethi $r10 0
 	mulu $r11 $r2 8
@@ -794,7 +832,7 @@ temp_read_sensor:
  * Out: $r10: the desired fan speed
  */
 temp_control_manual:
-	/* $r10 = iord(temp_pwm_cur) */
+	/* $r10 = ld(temp_pwm_cur) */
 	mov $r11 #temp_pwm_cur
 	sethi $r11 0
 	clear b32 $r10
@@ -807,13 +845,13 @@ temp_control_manual:
  * Out: $r10: the desired fan speed
  */
 temp_control_linear:
-	/* $r13 = iord(temp_fan_start) */
+	/* $r13 = ld(temp_fan_start) */
 	mov $r15 #temp_fan_start
 	sethi $r15 0
 	clear b32 $r13
 	ld b8 $r13 D[$r15]
 
-	/* $r12 = iord(temp_fan_boost) */
+	/* $r12 = ld(temp_fan_boost) */
 	mov $r15 #temp_fan_boost
 	sethi $r15 0
 	clear b32 $r12
@@ -862,13 +900,13 @@ temp_control_target:
 	push $r1
 	push $r2
 
-	/* $r1 = iord(temp_temp_target) */
+	/* $r1 = ld(temp_temp_target) */
 	mov $r15 #temp_temp_target
 	sethi $r15 0
 	clear b32 $r11
 	ld b8 $r1 D[$r15]
 
-	/* $r2 = iord(temp_pwm_cur) */
+	/* $r2 = ld(temp_pwm_cur) */
 	mov $r15 #temp_pwm_cur
 	sethi $r15 0
 	clear b32 $r2
@@ -906,7 +944,7 @@ temp_main:
 	push $r4
 	push $r5
 
-	/* $r1 = iord($r2 = temp_fan_mode) */
+	/* $r1 = ld($r2 = temp_fan_mode) */
 	movw $r2 #temp_fan_mode
 	sethi $r2 0
 	clear b32 $r1
@@ -932,7 +970,7 @@ temp_main_sanity_check_ok:
 	movw $r5 100
 	sethi $r5 0
 
-	/* $r12 = iord(temp_fan_boost) */
+	/* $r12 = ld(temp_fan_boost) */
 	mov $r15 #temp_fan_boost
 	sethi $r15 0
 	clear b32 $r12
@@ -942,7 +980,7 @@ temp_main_sanity_check_ok:
 	cmpu b32 $r3 $r12
 	bra a #temp_main_fan_set
 
-	/* $r2 = iord(temp_fan_mode[$r1]) */
+	/* $r2 = ld(temp_fan_mode[$r1]) */
 	movw $r10 #temp_mode_func_ptr
 	sethi $r10 0
 	mulu $r11 $r1 2
@@ -954,13 +992,13 @@ temp_main_sanity_check_ok:
 	call $r2
 	mov b32 $r5 $r10
 
-	/* $r3 = iord(temp_pwm_min) */
+	/* $r3 = ld(temp_pwm_min) */
 	movw $r15 #temp_pwm_min
 	sethi $r15 0
 	clear b32 $r3
 	ld b8 $r3 D[$r15]
 
-	/* $r4 = iord(temp_pwm_max) */
+	/* $r4 = ld(temp_pwm_max) */
 	movw $r15 #temp_pwm_max
 	sethi $r15 0
 	clear b32 $r4
@@ -1022,15 +1060,16 @@ hwsq_dispatch:
  * Out:	None
  */
 main:
+	//call #dispatch
 	/* call the tasks */
-	call #temp_main
+	//call #temp_main
 
 	/* sleep_ns(5s) */
-	movw $r11 0xf200
+	/*movw $r11 0xf200
 	sethi $r11 0x2a050000
 	movw $r10 1
 	sethi $r10 0
-	call #sleep_ns
+	call #sleep_ns*/
 
 	bra #main
 align 256
