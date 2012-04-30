@@ -190,7 +190,7 @@ section #nvd9_pdaemon_code
 init:
 	/* force $r0 to 0 */
 	clear b32 $r0
-	
+
 	/* set the stack pointer */
 	mov $r1 #stack_end
 	mov $sp $r1
@@ -264,7 +264,7 @@ isr:
 	push $r15
 	mov $r1 $flags
 	push $r1
-	
+
 	ld b32 $r1 D[$r0+4]
 	add b32 $r1 $r1 1
 	st b32 D[$r0+4] $r1
@@ -307,7 +307,7 @@ isr_dispatch_next:
 	IOADDR(`#io_INTR_CLEAR', `$r1')
 	mov $r3 -1
 	iowrs I[$r1] $r3
-	
+
 	IOADDR(`#io_INTR11', `$r1')
 	clear b32 $r3
 	iowrs I[$r1] $r3
@@ -356,7 +356,7 @@ mmsync:
  */
 mmwr:
 	call #mmsync
-	
+
 	/* iowr(MMIO_ADDR, $r10) */
 	IOADDR(`#io_MMIO_ADDR', `$r15')
 	iowr I[$r15] $r10
@@ -370,7 +370,7 @@ mmwr:
 	mov $r11 0xf2
 	sethi $r11 0x10000
 	iowrs I[$r15] $r11
-	
+
 	/* TODO: check for errors */
 
 	ret
@@ -409,7 +409,7 @@ mmrd:
 	iord $r10 I[$r15]
 
 	ret
-	
+
 /* chipset
  * In: 	None
  * Out:	$r10: the chipset
@@ -1060,16 +1060,15 @@ hwsq_dispatch:
  * Out:	None
  */
 main:
-	//call #dispatch
 	/* call the tasks */
-	//call #temp_main
+	call #temp_main
 
 	/* sleep_ns(5s) */
-	/*movw $r11 0xf200
+	movw $r11 0xf200
 	sethi $r11 0x2a050000
 	movw $r10 1
 	sethi $r10 0
-	call #sleep_ns*/
+	call #sleep_ns
 
 	bra #main
 align 256
