@@ -1,15 +1,15 @@
 /*
  *                               - PDAEMON -
  *
- * This code is meant to be run in PDAEMON. It exports some services to the
- * Host and does some operations such as fan management on its own.
- * Each operations are done in separated "processes". Up to 16 process can
+ * This code is meant to be run on PDAEMON. It exports some services to the
+ * host and does some operations such as automatic fan management.
+ * Each operations are done in separated "processes". Up to 16 processes can
  * execute simultaneously.
  *
  * Some parts of this code are based on Maarten Lankhorst's previous work.
  *
  * = Calling conventions =
- * The calling conventions are simple
+ * The calling conventions are simple:
  * - $r0 = 0
  * - Function parameters are passed in $r10-15
  * - Return value is passed in $r10
@@ -52,7 +52,7 @@
 
 /*
  * some notes to self about the envyas/fuc syntax:
- * - You cannot load a 32 bits immediate into a reg, you need to do:
+ * - One cannot load a 32 bits immediate into a reg, one would need to:
  * 	movw $rx (value & 0xffff)
  * 	sethi $rx (value & 0xffff0000)
  *

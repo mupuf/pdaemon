@@ -125,7 +125,7 @@ static void pdaemon_upload(unsigned int cnum) {
 		data_segment_upload_u32(cnum, 0, nvd9_pdaemon_data,
 			  sizeof(nvd9_pdaemon_data)/sizeof(*nvd9_pdaemon_data));
 	}
-	
+
 	/* code upload */
 	if (nva_cards[cnum].chipset < 0xd9) {
 		code_size = sizeof(nva3_pdaemon_code)/sizeof(*nva3_pdaemon_code);
@@ -145,7 +145,7 @@ static void pdaemon_upload(unsigned int cnum) {
 	nva_wr32(cnum, 0x10a104, 0x0);
 	nva_wr32(cnum, 0x10a10c, 0x0);
 	nva_wr32(cnum, 0x10a100, 0x2);
-	
+
 	printf("Uploaded pdaemon microcode: data = %x bytes, code = %x bytes\n",
 			sizeof(nva3_pdaemon_data)/sizeof(*nva3_pdaemon_data),
 			sizeof(nva3_pdaemon_code)/sizeof(*nva3_pdaemon_code));
