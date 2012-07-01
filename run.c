@@ -111,10 +111,8 @@ static void pdaemon_upload(unsigned int cnum) {
 	uint32_t *code;
 
 	/* reboot PDAEMON */
-	nva_mask(cnum, 0x200, 0x2000, 0);
 	nva_mask(cnum, 0x022210, 0x1, 0x0);
 	nva_mask(cnum, 0x022210, 0x1, 0x1);
-	nva_mask(cnum, 0x200, 0x2000, 0x2000);
 	nva_wr32(cnum, 0x10a014, 0xffffffff); /* disable all interrupts */
 
 	/* data upload */
