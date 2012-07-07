@@ -30,7 +30,7 @@
  * - Each entry is composed of:
  * 	- u4: pid		// process who should receive this command
  * 	- u12: cmd_size		// size of the command buffer
- * 	- u16: cmd_ptr		// pointer to some place in the data section
+ * 	- u16: cmd_ptr		// pointer to some place in the data .section
  * - the command pointer should point to some place located in
  * 	[dispatch_data, ptr_temp_name[
  * - commands are process-specific and are documented inside the
@@ -67,56 +67,56 @@ ifdef(`NVA3', `define(`IOADDR', `movw $2 $1
 )
 
 /* define the IO reg addresses */
-equ #io_INTR_CLEAR	0x004
-equ #io_INTR		0x008
-equ #io_INTR_EN_SET	0x010
-equ #io_INTR_ROUTING	0x01c
-equ #io_TIME_LOW	0x02c
-equ #io_TIME_HIGH	0x030
-equ #io_FIFO_0_PUT	0x4a0
-equ #io_FIFO_0_GET	0x4b0
-equ #io_FIFO_INTR	0x4c0
-equ #io_FIFO_INTR_EN	0x4c4
-equ #io_INTR11		0x688
-equ #io_MMIO_ADDR	0x7a0
-equ #io_MMIO_VAL	0x7a4
-equ #io_MMIO_CTRL	0x7ac
+.equ #io_INTR_CLEAR	0x004
+.equ #io_INTR		0x008
+.equ #io_INTR_EN_SET	0x010
+.equ #io_INTR_ROUTING	0x01c
+.equ #io_TIME_LOW	0x02c
+.equ #io_TIME_HIGH	0x030
+.equ #io_FIFO_0_PUT	0x4a0
+.equ #io_FIFO_0_GET	0x4b0
+.equ #io_FIFO_INTR	0x4c0
+.equ #io_FIFO_INTR_EN	0x4c4
+.equ #io_INTR11		0x688
+.equ #io_MMIO_ADDR	0x7a0
+.equ #io_MMIO_VAL	0x7a4
+.equ #io_MMIO_CTRL	0x7ac
 
 /* store some important pointers */
 ifdef(`NVA3',
-section #nva3_pdaemon_ptrs
+.section #nva3_pdaemon_ptrs
 ,
-section #nvd9_pdaemon_ptrs
+.section #nvd9_pdaemon_ptrs
 )
-ptr_data_stack_begin: b32 #stack_begin
-ptr_data_stack_end: b32 #stack_end
-ptr_core_name: b32 #core_name
-ptr_core_pdaemon_freq: b32 #core_pdaemon_freq
-ptr_dispatch_fence: b32 #dispatch_fence
-ptr_dispatch_pid_table: b32 #dispatch_pid_table
-ptr_dispatch_ring: b32 #dispatch_ring
-ptr_dispatch_data: b32 #dispatch_data
-ptr_rdispatch_ring_get: b32 #rdispatch_ring_get
-ptr_rdispatch_ring: b32 #rdispatch_ring
-ptr_temp_name: b32 #temp_name
-ptr_temp_mode_func_ptr: b32 #temp_mode_func_ptr
-ptr_temp_last_updated: b32 #temp_last_updated
-ptr_temp_pwm_id: b32 #temp_pwm_id
-ptr_temp_pwm_cur: b32 #temp_pwm_cur
-ptr_temp_pwm_divisor: b32 #temp_pwm_divisor
-ptr_temp_pwm_min: b32 #temp_pwm_min
-ptr_temp_pwm_max: b32 #temp_pwm_max
-ptr_temp_fan_mode: b32 #temp_fan_mode
-ptr_temp_temp_target: b32 #temp_temp_target
-ptr_temp_critical: b32 #temp_critical
-ptr_temp_down_clock: b32 #temp_down_clock
-ptr_temp_fan_boost: b32 #temp_fan_boost
-ptr_hwsq_name: b32 #hwsq_name
+ptr_data_stack_begin: .b32 #stack_begin
+ptr_data_stack_end: .b32 #stack_end
+ptr_core_name: .b32 #core_name
+ptr_core_pdaemon_freq: .b32 #core_pdaemon_freq
+ptr_dispatch_fence: .b32 #dispatch_fence
+ptr_dispatch_pid_table: .b32 #dispatch_pid_table
+ptr_dispatch_ring: .b32 #dispatch_ring
+ptr_dispatch_data: .b32 #dispatch_data
+ptr_rdispatch_ring_get: .b32 #rdispatch_ring_get
+ptr_rdispatch_ring: .b32 #rdispatch_ring
+ptr_temp_name: .b32 #temp_name
+ptr_temp_mode_func_ptr: .b32 #temp_mode_func_ptr
+ptr_temp_last_updated: .b32 #temp_last_updated
+ptr_temp_pwm_id: .b32 #temp_pwm_id
+ptr_temp_pwm_cur: .b32 #temp_pwm_cur
+ptr_temp_pwm_divisor: .b32 #temp_pwm_divisor
+ptr_temp_pwm_min: .b32 #temp_pwm_min
+ptr_temp_pwm_max: .b32 #temp_pwm_max
+ptr_temp_fan_mode: .b32 #temp_fan_mode
+ptr_temp_temp_target: .b32 #temp_temp_target
+ptr_temp_critical: .b32 #temp_critical
+ptr_temp_down_clock: .b32 #temp_down_clock
+ptr_temp_fan_boost: .b32 #temp_fan_boost
+ptr_hwsq_name: .b32 #hwsq_name
 
 ifdef(`NVA3',
-section #nva3_pdaemon_data
+.section #nva3_pdaemon_data
 ,
-section #nvd9_pdaemon_data
+.section #nvd9_pdaemon_data
 )
 /* memory map
  * start	stop		purpose
@@ -129,63 +129,63 @@ section #nvd9_pdaemon_data
  * 0xc00	0xd00		hwsq
  */
 /* stack */
-stack_begin: b8 0xfe
-skip 0x3fb
-stack_end: b32 0xdeadcafe
+stack_begin: .b8 0xfe
+.skip 0x3fb
+stack_end: .b32 0xdeadcafe
 
 /* core */
-core_name: b8 0x63 0x6f 0x72 0x65 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0
-core_pdaemon_freq: b32 202000000 // 202MHz
-align 0x100
+core_name: .b8 0x63 0x6f 0x72 0x65 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0
+core_pdaemon_freq: .b32 202000000 // 202MHz
+.align 0x100
 
 /* dispatch */
-dispatch_fence: b32 0
-skip 0xc
-dispatch_pid_table:	b32 #core_dispatch #temp_dispatch #hwsq_dispatch 0x00
-			b32 0x00 0x00 0x00 0x00
-			b32 0x00 0x00 0x00 0x00
-			b32 0x00 0x00 0x00 0x00
+dispatch_fence: .b32 0
+.skip 0xc
+dispatch_pid_table:	.b32 #core_dispatch #temp_dispatch #hwsq_dispatch 0x00
+			.b32 0x00 0x00 0x00 0x00
+			.b32 0x00 0x00 0x00 0x00
+			.b32 0x00 0x00 0x00 0x00
 
-dispatch_ring:		b32 0xff 0xff 0xff 0xff
-			b32 0xff 0xff 0xff 0xff
-			b32 0xff 0xff 0xff 0xff
-			b32 0xff 0xff 0xff 0xff
+dispatch_ring:		.b32 0xff 0xff 0xff 0xff
+			.b32 0xff 0xff 0xff 0xff
+			.b32 0xff 0xff 0xff 0xff
+			.b32 0xff 0xff 0xff 0xff
 
-dispatch_data: b32 0xdeadbeef
-align 0x400
+dispatch_data: .b32 0xdeadbeef
+.align 0x400
 
 /* rdispatch */
-rdispatch_ring_get: b32 0
-skip 0xc
-rdispatch_ring: b32 0xdeadbabe
-skip 0x1ec
+rdispatch_ring_get: .b32 0
+.skip 0xc
+rdispatch_ring: .b32 0xdeadbabe
+.skip 0x1ec
 
 /* temp_mgmt */
-temp_name: b8 0x74 0x65 0x6d 0x70 0x5f 0x6d 0x67 0x6d 0x74 0x0 0x0 0x0 0x0 0x0 0x0 0x0 /* temp_mgmt */
-temp_mode_func_ptr: b16 #temp_control_manual #temp_control_linear #temp_control_linear #temp_control_target
-temp_last_updated: b64 0
-temp_pwm_id: b8 0
-temp_pwm_cur: b8 30
-temp_pwm_divisor: b16 0x21c
-temp_pwm_min: b8 30
-temp_pwm_max: b8 100
-temp_fan_mode: b8 2
-temp_temp_target: b8 60
-temp_critical: b8 110
-temp_down_clock: b8 100
-temp_fan_boost: b8 90
-temp_fan_start: b8 30
-align 0x100
+temp_name: .b8 0x74 0x65 0x6d 0x70 0x5f 0x6d 0x67 0x6d 0x74 0x0 0x0 0x0 0x0 0x0 0x0 0x0 /* temp_mgmt */
+temp_mode_func_ptr: .b16 #temp_control_manual #temp_control_linear #temp_control_linear #temp_control_target
+temp_last_updated: .b64 0
+temp_pwm_id: .b8 0
+temp_pwm_cur: .b8 30
+temp_pwm_divisor: .b16 0x21c
+temp_pwm_min: .b8 30
+temp_pwm_max: .b8 100
+temp_fan_mode: .b8 2
+temp_temp_target: .b8 60
+temp_critical: .b8 110
+temp_down_clock: .b8 100
+temp_fan_boost: .b8 90
+temp_fan_start: .b8 30
+.align 0x100
 
 /* hwsq */
-hwsq_name: b8 0x68 0x77 0x73 0x71 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0/* hwsq */
-align 0x100
+hwsq_name: .b8 0x68 0x77 0x73 0x71 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0 0x0/* hwsq */
+.align 0x100
 
 
 ifdef(`NVA3',
-section #nva3_pdaemon_code
+.section #nva3_pdaemon_code
 ,
-section #nvd9_pdaemon_code
+.section #nvd9_pdaemon_code
 )
 init:
 	/* force $r0 to 0 */
@@ -1071,4 +1071,4 @@ main:
 	call #sleep_ns
 
 	bra #main
-align 256
+.align 256
