@@ -59,12 +59,17 @@
  * - Indexed access (I[$rx + imm]). imm is limited to 0x3fc.
  */
 
-ifdef(`NVA3', `define(`IOADDR', `movw $2 $1
-	sethi $2 0
-	shl b32 $2 6')'
+// IOADDR(address, output_reg)
+ifdef(`NVA3', `define(`IOADDR', `movw $2 $1 << 6
+	sethi $2 0')'
 ,define(`IOADDR', `movw $2 $1
 	sethi $2 0')
 )
+
+// RING_WRAP_AROUND(`current_pos', `bump_increment', `ring_base', `ring_size', `output_reg')
+define(`RING_WRAP_AROUND', `add b32 $5 $1 $2
+	mod $5 $5 $4
+	add b32 $5 $5 $3')
 
 /* define the IO reg addresses */
 .equ #io_INTR_CLEAR	0x004
@@ -96,7 +101,6 @@ ptr_dispatch_fence: .b32 #dispatch_fence
 ptr_dispatch_pid_table: .b32 #dispatch_pid_table
 ptr_dispatch_ring: .b32 #dispatch_ring
 ptr_dispatch_data: .b32 #dispatch_data
-ptr_rdispatch_ring_get: .b32 #rdispatch_ring_get
 ptr_rdispatch_ring: .b32 #rdispatch_ring
 ptr_temp_name: .b32 #temp_name
 ptr_temp_mode_func_ptr: .b32 #temp_mode_func_ptr
@@ -155,10 +159,8 @@ dispatch_data: .b32 0xdeadbeef
 .align 0x400
 
 /* rdispatch */
-rdispatch_ring_get: .b32 0
-.skip 0xc
 rdispatch_ring: .b32 0xdeadbabe
-.skip 0x1ec
+.align 0x100
 
 /* temp_mgmt */
 temp_name: .b8 0x74 0x65 0x6d 0x70 0x5f 0x6d 0x67 0x6d 0x74 0x0 0x0 0x0 0x0 0x0 0x0 0x0 /* temp_mgmt */
@@ -472,6 +474,36 @@ memcpy:
 memcpy_exit:
 	ret
 
+/* memcpy_ring:
+ * In: 	$r10: dst
+ * 	$r11: ring_base
+ * 	$r12: ring_size
+ * 	$r13: src
+ * 	$r14: length
+ * Out:	None
+ */
+memcpy_ring:
+	/* return when length == 0 */
+	cmpu b32 $r14 0
+	bra e #memcpy_ring_exit
+
+	/* dst[0] = src[0] */
+	ld b8 $r15 D[$r13]
+	st b8 D[$r10] $r15
+
+	/* dst = RING_BASE + ((dst + 1) % RING_SIZE);
+	 * src++;
+	 * length--;
+	 */
+	RING_WRAP_AROUND(`$r10', `1', `$r11', `$r12', `$r10')
+	add b32 $r13 1
+	sub b32 $r14 1
+
+	bra #memcpy_ring
+
+memcpy_ring_exit:
+	ret
+
 /* strncpy:
  * In: 	$r10: dst
  * 	$r11: src
@@ -714,6 +746,7 @@ dispatch_exec_cmd_set:
 
 dispatch_exec_cmd_exit:
 	ret
+
 
 /***************************************
  *                                     *
