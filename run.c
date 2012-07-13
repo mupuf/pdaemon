@@ -149,7 +149,7 @@ static void pdaemon_upload(unsigned int cnum) {
 	nva_wr32(cnum, 0x10a10c, 0x0);
 	nva_wr32(cnum, 0x10a100, 0x2);
 
-	printf("Uploaded pdaemon microcode: data = %x bytes, code = %x bytes\n",
+	printf("Uploaded pdaemon microcode: data = %lx bytes, code = %lx bytes\n",
 			sizeof(nva3_pdaemon_data)/sizeof(*nva3_pdaemon_data),
 			sizeof(nva3_pdaemon_code)/sizeof(*nva3_pdaemon_code));
 }
@@ -358,7 +358,7 @@ int main(int argc, char **argv)
 		cmd = pdaemon_resource_get_set(cnum, 1, get, 0x21, NULL, 0x4);
 		pdaemon_read_resource(cnum, &cmd, buf);
 
-		printf("%u ms: temp=%i pwm=%i\n", get_time(cnum) / 1000000, nva_rd32(cnum, 0x20400), buf[0]);
+		printf("%lu ms: temp=%i pwm=%i\n", get_time(cnum) / 1000000, nva_rd32(cnum, 0x20400), buf[0]);
 
 		usleep(5000000);
 	}
