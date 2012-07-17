@@ -60,7 +60,7 @@
  */
 
 // IOADDR(address, output_reg)
-ifdef(`NVA3', `define(`IOADDR', `movw $2 $1 << 6
+ifdef(`NVA3', `define(`IOADDR', `movw $2 $1
 	sethi $2 0
 	shl b32 $2 6')'
 ,define(`IOADDR', `movw $2 $1
