@@ -106,7 +106,7 @@ static void data_segment_upload_u8(unsigned int cnum, uint16_t base,
 
 static void pdaemon_upload(unsigned int cnum) {
 	int i;
-	uint32_t code_size;
+	uint32_t code_size, max_code_size, max_data_size;
 	uint32_t *code;
 
 	/* reboot PDAEMON */
@@ -148,9 +148,22 @@ static void pdaemon_upload(unsigned int cnum) {
 	nva_wr32(cnum, 0x10a10c, 0x0);
 	nva_wr32(cnum, 0x10a100, 0x2);
 
-	printf("Uploaded pdaemon microcode: data = %lx bytes, code = %lx bytes\n",
-			sizeof(nva3_pdaemon_data)/sizeof(*nva3_pdaemon_data),
-			sizeof(nva3_pdaemon_code)/sizeof(*nva3_pdaemon_code));
+	max_code_size = (nva_rd32(cnum, 0x10a0108) & 0x1ff) << 8;
+	max_data_size = (nva_rd32(cnum, 0x10a0108) & 0x1fe00) >> 1;
+
+	if (nva_cards[cnum].chipset < 0xd9) {
+		printf("Uploaded pdaemon microcode: data = 0x%lx bytes(%i%%), code = 0x%lx bytes(%i%%)\n",
+			sizeof(nva3_pdaemon_data),
+		       (sizeof(nva3_pdaemon_data) * 100) / max_data_size,
+			sizeof(nva3_pdaemon_code),
+		       (sizeof(nva3_pdaemon_code) * 100) / max_code_size);
+	} else {
+		printf("Uploaded pdaemon microcode: data = 0x%lx bytes, code = 0x%lx bytes\n",
+			sizeof(nvd9_pdaemon_data),
+		        (sizeof(nvd9_pdaemon_data) * 100) / max_data_size,
+			sizeof(nvd9_pdaemon_code),
+			(sizeof(nvd9_pdaemon_code) * 100) / max_data_size);
+	}
 }
 
 static void pdaemon_RB_state_dump(unsigned int cnum)
