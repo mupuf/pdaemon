@@ -160,7 +160,7 @@ dispatch_data: .b32 0xdeadbeef
 .skip 0x46c
 
 /* rdispatch */
-rdispatch_ring: .b32 0xdeadbabe
+rdispatch_ring: .b32 0xfacade42
 .align 0x100
 
 /* temp_mgmt */
