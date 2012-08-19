@@ -14,6 +14,7 @@ typedef enum { get = 0, set = 1} resource_op;
 #define PDAEMON_DISPATCH_RING 0x00000550
 #define PDAEMON_DISPATCH_DATA 0x00000590
 #define PDAEMON_DISPATCH_DATA_SIZE 0x00000370
+#define RDISPATCH_SIZE 0x00000100
 
 #define NV04_PTIMER_TIME_0                                 0x00009400
 #define NV04_PTIMER_TIME_1                                 0x00009410
@@ -323,6 +324,70 @@ static bool pdaemon_read_resource(int cnum, struct pdaemon_resource_command *cmd
 
 	return true;
 }
+
+static uint32_t ring_wrap_around(int cur_pos, int bump, uint32_t ring_base, uint32_t ring_size)
+{
+	return ((cur_pos + bump) % ring_size) + ring_base;  
+}
+
+void data_segment_read_ring(unsigned int cnum, uint32_t ring_base, 
+			    uint32_t ring_size, uint32_t offset, uint32_t length, uint8_t *buf)
+{
+	uint16_t copied_bytes = 0;
+	uint16_t cur_offset = offset;
+	
+	do {
+		uint32_t max_bytes_to_copy = ring_base + ring_size - cur_offset;
+		uint32_t bytes_to_copy = (length - copied_bytes);
+		
+		if (bytes_to_copy > max_bytes_to_copy)
+			bytes_to_copy = max_bytes_to_copy;
+
+		data_segment_read(cnum, cur_offset, bytes_to_copy, buf + copied_bytes);
+		cur_offset = ring_wrap_around(cur_offset, bytes_to_copy, 0xa00, RDISPATCH_SIZE);
+		
+		copied_bytes += bytes_to_copy;
+	} while (copied_bytes < length);
+}
+
+struct rdispatch_msg {
+  
+	uint8_t pid;
+	uint8_t msg_id;
+	uint8_t payload_size;
+	uint8_t payload[RDISPATCH_SIZE];
+};
+
+int rdispatch_read_msg(int cnum, struct rdispatch_msg *msg){
+		
+	uint32_t RFIFO_GET;
+	uint32_t RFIFO_PUT;
+	uint8_t header_buf[0x4];
+	int i = 0;
+
+	RFIFO_GET = nva_rd32(cnum, 0x10a4cc);
+	RFIFO_PUT = nva_rd32(cnum, 0x10a4c8);
+
+	if ( RFIFO_GET == RFIFO_PUT ){
+		return 1;
+	} else {
+		//data_segment_read(cnum, RFIFO_GET, 0x4, header_buf);
+		data_segment_read_ring(cnum, 0xa00, RDISPATCH_SIZE, RFIFO_GET, 4, header_buf);
+		RFIFO_GET = ring_wrap_around( RFIFO_GET, 3, 0xa00, RDISPATCH_SIZE);
+
+		msg->pid = header_buf[0];
+		msg->msg_id = header_buf[1];
+		msg->payload_size = header_buf[2];
+
+		data_segment_read_ring(cnum, 0xa00, RDISPATCH_SIZE, RFIFO_GET, header_buf[2], msg->payload);
+
+		RFIFO_GET = nva_rd32(cnum, 0x10a4cc);
+		nva_wr32(cnum, 0x10a4cc, ring_wrap_around( RFIFO_GET, 3 + header_buf[2], 0xa00, RDISPATCH_SIZE));
+	}
+    
+	return 0;
+}
+
 
 int main(int argc, char **argv)
 {
