@@ -1362,11 +1362,12 @@ FSE_delay_ns_fr:
 FSE_delay_ns:
 	mov b32 $r1 $r10
 
-	/* ld b32 $r11 D[$r1 + 1] */
-	/* r11 = LOW */
+	/* ld b16 $r11 D[$r1 + 1] */
+	/* r11 = param << 5 */
 	add b32 $r10 $r1 1
 	call #ld_16
 	mov b32 $r11 $r10
+	shl b32 $r11 5
 
 	/* r10 = HIGH = 0 */
 	mov $r10 0x0
