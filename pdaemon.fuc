@@ -1417,11 +1417,12 @@ FSE_mask:
 	call #ld_32
 	mov b32 $r2 $r10
 
-	/* r3 = MASK */
+	/* r3 = ~MASK */
 	/* ld b32 $r3 D[$r1 + 5] */
 	add b32 $r10 $r1 5
 	call #ld_32
 	mov b32 $r3 $r10
+	not b32 $r3
 
 	/* r4 = DATA */
 	/* ld b32 $r4 D[$r1 + 9] */
