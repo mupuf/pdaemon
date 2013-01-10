@@ -2,6 +2,8 @@
 #include <unistd.h>
 #include <malloc.h>
 #include "nva.h"
+#include "FSE.h"
+
 #include "nva3_pdaemon.fuc.h"
 #include "nvd9_pdaemon.fuc.h"
 
@@ -388,11 +390,12 @@ int rdispatch_read_msg(int cnum, struct rdispatch_msg *msg){
 	return 0;
 }
 
-
 int main(int argc, char **argv)
 {
 	struct pdaemon_resource_command cmd;
+	struct FSE_ucode code, *ucode=&code;
 	uint8_t buf[1000];
+	int i;
 
 	if (nva_init()) {
 		fprintf (stderr, "PCI init failure!\n");
@@ -438,14 +441,46 @@ int main(int argc, char **argv)
 	buf[0] = 3;
 	pdaemon_resource_get_set(cnum, 1, set, 0x26, buf, 1);
 
+	/* generate an FSE program */
+	FSE_init(ucode);
+	FSE_write(ucode, 0x10a5d0, 0x1);
+	FSE_write(ucode, 0x10a5d0, 0x10);
+	FSE_delay_ns(ucode, 65535);
+	FSE_write(ucode, 0x10a5d0, 0x11);
+	FSE_delay_ns(ucode, 1000);
+	FSE_mask(ucode, 0x10a5d0, 0x10, 0x0);
+	FSE_wait(ucode, 0x10a5d0, 0x1, 0x0);
+	FSE_write(ucode, 0x10a5d0, 0x1000);
+	FSE_fini(ucode);
+
+	/* print the generated code */
+	printf("encoded program: ucode->len = %i bytes", ucode->len);
+	for (i = 0; i < ucode->len; i++) {
+		if (i % 16 == 0)
+			printf("\n%08x: ", i);
+		printf("%02x ", ucode->ptr.u08[i]);
+	}
+	printf("\n\n");
+
+	/* send the program for execution */
+	pdaemon_resource_get_set(cnum, 2, set, 0x0, ucode->ptr.u08, ucode->len);
+
+	/* monitor the FSE status regs */
 	while (1) {
+		data_segment_dump(cnum, 0x00000c10, 0x8);
+		usleep(100000);
+
+	}
+
+	/* if you want to monitor your fan speed */
+	/* while (1) {
 		cmd = pdaemon_resource_get_set(cnum, 1, get, 0x21, NULL, 0x4);
 		pdaemon_read_resource(cnum, &cmd, buf);
 
 		printf("%lu ms: temp=%i pwm=%i\n", get_time(cnum) / 1000000, nva_rd32(cnum, 0x20400), buf[0]);
 
 		usleep(5000000);
-	}
+	} */
 
 	return 0;
 }

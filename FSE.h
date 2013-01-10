@@ -1,3 +1,10 @@
+#ifndef _FSE_H_
+#define _FSE_H_
+
+typedef unsigned char u8;
+typedef unsigned short u16;
+typedef unsigned int u32;
+typedef unsigned long long u64;
 
 struct FSE_ucode
 {
@@ -100,4 +107,4 @@ FSE_send_msg(struct FSE_ucode *FSE, u16 size, u8 *msg)
 		i++;
 	}
 }
-
+#endif
